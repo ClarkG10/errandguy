@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { X, Check } from 'lucide-react-native';
+import { BookingSectionHeader } from './booking/BookingSectionHeader';
+import { PAYMENT_OPTIONS, type PaymentOption } from './booking/paymentMethods';
+import { PressableScale } from './booking/PressableScale';
 import { BottomSheet } from '../ui/BottomSheet';
 import { PaymentBrandMark } from './PaymentBrandMark';
 import { Spinner } from '../ui/Spinner';
@@ -13,8 +16,11 @@ import { CacheTTL } from '../../services/cache.service';
 import { useAuthStore } from '../../stores/authStore';
 import { usePreferencesStore } from '../../stores/preferencesStore';
 import { LightColors } from '../../constants/colors';
+import { Radius } from '../../constants/radius';
 import { formatCurrency } from '../../utils/formatCurrency';
 import type { PaymentMethodType } from '../../types';
+
+export { PAYMENT_OPTIONS, paymentMethodLabel } from './booking/paymentMethods';
 
 interface PaymentMethodSelectorProps {
   selected: PaymentMethodType | undefined;
@@ -24,25 +30,6 @@ interface PaymentMethodSelectorProps {
    *  the wallet then shows whenever it holds anything at all. */
   amount?: number;
 }
-
-interface PaymentOption {
-  type: PaymentMethodType;
-  label: string;
-  description: string;
-}
-
-/**
- * Every way to pay, in the server catalog's order (PaymentMethodCatalog). None
- * needs anything saved: the wallet spends the balance the customer already
- * has, GCash and Maya are a one-time checkout in their app, and cash is
- * collected by the runner.
- */
-export const PAYMENT_OPTIONS: readonly PaymentOption[] = [
-  { type: 'wallet', label: 'ErrandGuy Wallet', description: 'Pay instantly from your wallet balance' },
-  { type: 'gcash', label: 'GCash', description: 'Approve the payment in the GCash app' },
-  { type: 'maya', label: 'Maya', description: 'Approve the payment in the Maya app' },
-  { type: 'cash', label: 'Cash on Delivery', description: 'Pay your runner directly when the errand is complete' },
-];
 
 const optionFor = (type: PaymentMethodType | undefined) =>
   PAYMENT_OPTIONS.find((o) => o.type === type);
@@ -141,7 +128,7 @@ export function PaymentMethodSelector({
 
   const walletLine = (() => {
     if (!wallet || spendable == null) return null;
-    const base = `Balance ${formatCurrency(spendable)}`;
+    const base = `Paid from your balance (${formatCurrency(spendable)})`;
     return wallet.bonus_balance > 0
       ? `${base} · includes ${formatCurrency(wallet.bonus_balance)} bonus credit`
       : base;
@@ -156,17 +143,23 @@ export function PaymentMethodSelector({
     const sub = opt.type === 'wallet' && walletLine ? walletLine : opt.description;
 
     return (
-      <Pressable
+      <PressableScale
         key={opt.type}
         accessibilityRole="button"
         accessibilityLabel={`${opt.label}. ${sub}`}
         accessibilityState={{ selected: isSelected }}
-        className={`flex-row items-center rounded-xl px-2 py-3 ${isSelected ? 'bg-primaryLight' : ''}`}
-        // Sheet-list rows take the flat surfaceMuted press wash, not the
-        // card scale treatment.
-        style={({ pressed }) =>
-          pressed ? { backgroundColor: LightColors.surfaceMuted } : null
-        }
+        // Sheet-list rows dim under the finger rather than scale. Layout and
+        // fill in a plain style — a Pressable style callback drops them.
+        pressedScale={1}
+        contentStyle={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          minHeight: 64,
+          paddingHorizontal: 8,
+          paddingVertical: 12,
+          borderRadius: Radius.control,
+          backgroundColor: isSelected ? LightColors.primaryLight : 'transparent',
+        }}
         android_ripple={{ color: `${LightColors.primary}14`, borderless: false }}
         onPress={() => {
           Haptics.selectionAsync().catch(() => {});
@@ -184,40 +177,45 @@ export function PaymentMethodSelector({
           </Text>
         </View>
         {isSelected && <Check size={20} color={LightColors.primary} />}
-      </Pressable>
+      </PressableScale>
     );
   };
 
   return (
-    <View className="mb-4">
-      <Text
-        className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2"
-        style={{ letterSpacing: 1.4 }}
-      >
-        Payment method
-      </Text>
-      <Pressable
+    <View>
+      <BookingSectionHeader title="Payment" />
+      {/* The whole card opens the picker; the "Change" chip on the right is
+          the visible affordance (a bare blue word read as a label). */}
+      <PressableScale
         accessibilityRole="button"
         accessibilityLabel={`Payment method: ${active?.label ?? 'none selected'}. Change`}
-        className="flex-row items-center border border-divider rounded-xl px-4 py-3.5 bg-surface"
-        style={({ pressed }) =>
-          pressed ? { backgroundColor: LightColors.surfaceMuted } : null
-        }
+        accessibilityHint="Opens the list of ways to pay"
         android_ripple={{ color: `${LightColors.primary}14`, borderless: false }}
         onPress={() => {
           Haptics.selectionAsync().catch(() => {});
           setShowSheet(true);
         }}
+        contentStyle={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          minHeight: 68,
+          paddingVertical: 12,
+          paddingHorizontal: 12,
+          borderRadius: Radius.card,
+          borderWidth: 1,
+          borderColor: LightColors.divider,
+          backgroundColor: LightColors.surface,
+        }}
       >
         {active ? (
           <>
             <PaymentBrandMark type={active.type} size={40} />
-            <View className="flex-1 ml-3">
-              <Text className="text-[14px] font-montserrat-bold text-textPrimary">
+            <View className="flex-1 ml-3 mr-2">
+              <Text className="text-[15px] font-montserrat-bold text-textPrimary">
                 {active.label}
               </Text>
               {activeSub ? (
-                <Text className="text-[11px] font-montserrat text-textSecondary">
+                <Text className="text-[13px] font-montserrat text-textSecondary mt-0.5">
                   {activeSub}
                 </Text>
               ) : null}
@@ -226,17 +224,22 @@ export function PaymentMethodSelector({
         ) : (
           // Spinner sits in the same 40pt slot as the method mark so the
           // trigger doesn't change height once the default is picked.
-          <View className="flex-1 flex-row items-center">
+          <View className="flex-1 flex-row items-center mr-2">
             <View className="w-10 h-10 items-center justify-center">
               <Spinner size="small" color={LightColors.primary} />
             </View>
-            <Text className="flex-1 ml-3 text-[14px] font-montserrat-bold text-textPrimary">
+            <Text className="flex-1 ml-3 text-[15px] font-montserrat-bold text-textPrimary">
               Select payment method
             </Text>
           </View>
         )}
-        <Text className="text-xs font-montserrat-bold text-primary">Change</Text>
-      </Pressable>
+        <View
+          className="rounded-full bg-primary50 px-3 items-center justify-center"
+          style={{ minHeight: 32 }}
+        >
+          <Text className="text-[13px] font-montserrat-bold text-primary">Change</Text>
+        </View>
+      </PressableScale>
 
       <BottomSheet
         isVisible={showSheet}

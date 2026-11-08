@@ -46,7 +46,7 @@ export default function LocationPermissionScreen() {
       grantedLabel="Location access enabled"
       blockedTitle="Location is turned off for ErrandGuy"
       blockedBody={`Open ${Platform.OS === 'ios' ? 'Settings' : 'App info'} → Permissions → Location to turn it on.`}
-      allowLabel="Allow Location"
+      allowLabel="Allow location"
       requestErrorMessage="Couldn’t check location access. You can enable it later in Settings."
       skipHint="Continues without granting location access — you can enable it later in Settings"
       // Log in goes underneath sign-up, so back (the arrow, or Android's back

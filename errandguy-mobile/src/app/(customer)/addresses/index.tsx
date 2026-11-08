@@ -8,8 +8,8 @@ import { Button } from '../../../components/ui/Button';
 import { Card } from '../../../components/ui/Card';
 import { Input } from '../../../components/ui/Input';
 import { ErrorState } from '../../../components/ui/ErrorState';
-import { EmptyState } from '../../../components/ui/EmptyState';
-import { Illustration } from '../../../components/ui/Illustration';
+import { StatePanel } from '../../../components/customer/home/StatePanel';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
@@ -251,7 +251,7 @@ export default function AddressesScreen() {
       retry: true,
       onSuccess: () => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        toast.success('Address saved');
+        toast.success(isEdit ? 'Address updated' : 'Address saved');
       },
     });
   };
@@ -387,30 +387,26 @@ export default function AddressesScreen() {
 
   return (
     <View className="flex-1 bg-background">
+      {/* No decorative 3D pin behind the header any more (rule 13): it sat
+          under the Add action and read as an overlap. */}
       <GradientHeader
-        title="Saved Addresses"
+        title="Saved addresses"
         showBack
         fallbackHref="/(customer)/(tabs)/profile"
         trailing={{
-          label: showAdd ? 'Cancel' : '+ Add',
+          label: showAdd ? 'Cancel' : 'Add',
+          accessibilityLabel: showAdd ? 'Cancel adding an address' : 'Add an address',
           onPress: resetForm,
         }}
       />
 
-      {/* Subtle brand accent — a faint 3D location pin tucked into the
-          top-right of the header band. Purely decorative: pointer-events
-          are off so it never intercepts the "+ Add" action beneath it, and
-          the low opacity keeps it a whisper rather than a hero. Coexists
-          with the empty-state illustration further down the list. */}
-      <View
-        pointerEvents="none"
-        style={{ position: 'absolute', top: insets.top + 2, right: -12, opacity: 0.14, zIndex: 5 }}
-      >
-        <Illustration name="3d-pin" size={64} />
-      </View>
-
       {loading ? (
-        <AddressSkeleton />
+        <View className="flex-1">
+          <AddressSkeleton />
+          <View className="px-5 pb-6">
+            <SlowNetworkNotice loading onRetry={fetchAddresses} />
+          </View>
+        </View>
       ) : addressesQ.error && addresses.length === 0 ? (
         // A failed fetch used to fall through to the empty state, which
         // told the user they had no addresses when we simply couldn't load
@@ -619,7 +615,7 @@ export default function AddressesScreen() {
                 )}
 
                 <Button
-                  title={editingId ? 'Update' : 'Save Address'}
+                  title={editingId ? 'Save changes' : 'Save address'}
                   onPress={handleAdd}
                   disabled={!newAddress.trim()}
                   size="sm"
@@ -631,10 +627,10 @@ export default function AddressesScreen() {
 
           {/* Address List */}
           {!loading && addresses.length === 0 && !showAdd ? (
-            <EmptyState
-              illustration={<Illustration name="empty-addresses" size={180} />}
-              title="No saved addresses"
-              description="Save the places you go most for faster booking."
+            <StatePanel
+              icon={MapPin}
+              title="No saved addresses yet"
+              description="Save home, work and the places you go most, then pick them in one tap when you book."
               actionLabel="Add an address"
               onAction={resetForm}
             />

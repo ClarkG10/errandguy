@@ -35,7 +35,8 @@ interface BookingStepIndicatorProps {
  * - Uses a connector-line + numbered-circle pattern with explicit
  *   completed/active/upcoming states. Completed steps render a check
  *   glyph instead of the number so the user knows they can navigate
- *   back to revise without losing data.
+ *   back to revise without losing data. Completed and current steps are
+ *   brand primary (amber is the brand accent, not a "done" colour).
  * - Exposes proper `accessibilityRole="progressbar"` semantics so
  *   VoiceOver/TalkBack announce the position correctly.
  */
@@ -59,40 +60,35 @@ export function BookingStepIndicator({
         return (
           <React.Fragment key={label}>
             <View className="items-center" style={{ width: 56 }}>
+              {/* Done and current are both brand primary — amber is the
+                  brand accent, never a "done" colour. The current step is
+                  told apart by its number and a soft primary halo. */}
               <View
-                className={`w-7 h-7 rounded-full items-center justify-center ${
-                  isCompleted ? 'bg-accentStrong' : isActive ? 'bg-primary' : 'bg-surface'
-                }`}
-                style={[
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: isUpcoming ? LightColors.surface : LightColors.primary,
                   // dividerStrong, not divider — the faint hairline is
                   // ~1.06:1 against the #F7F8FA canvas, so upcoming
                   // circles read as floating numbers instead of steps.
-                  isUpcoming ? { borderWidth: 1.5, borderColor: LightColors.dividerStrong } : null,
-                  isActive
-                    ? {
-                        shadowColor: LightColors.primary,
-                        shadowOffset: { width: 0, height: 2 },
-                        shadowOpacity: 0.14,
-                        shadowRadius: 8,
-                        elevation: 3,
-                      }
-                    : null,
-                ]}
+                  borderWidth: isUpcoming ? 1.5 : isActive ? 3 : 0,
+                  borderColor: isUpcoming ? LightColors.dividerStrong : LightColors.primarySoft,
+                }}
               >
                 {isCompleted ? (
                   // Lucide check (not a text glyph) — OEM fonts render '✓'
                   // with inconsistent weight/metrics on Android, and this
                   // is the app's one icon family.
-                  <Check
-                    size={14}
-                    color={LightColors.textInverse}
-                    strokeWidth={3}
-                  />
+                  <Check size={14} color={LightColors.textInverse} strokeWidth={3} />
                 ) : (
                   <Text
                     className={`text-[11px] font-montserrat-bold ${
                       isActive ? 'text-white' : 'text-textTertiary'
                     }`}
+                    style={{ fontVariant: ['tabular-nums'] }}
                   >
                     {i + 1}
                   </Text>
@@ -100,11 +96,11 @@ export function BookingStepIndicator({
               </View>
               <Text
                 numberOfLines={1}
-                className={`text-[10px] mt-1.5 ${
+                className={`text-[11px] mt-1.5 ${
                   isActive
-                    ? 'font-montserrat-semi text-textPrimary'
+                    ? 'font-montserrat-bold text-textPrimary'
                     : isCompleted
-                    ? 'font-montserrat text-accentDark'
+                    ? 'font-montserrat-semi text-primaryDark'
                     : 'font-montserrat text-textTertiary'
                 }`}
               >
@@ -116,7 +112,7 @@ export function BookingStepIndicator({
                 style={{
                   flex: 1,
                   height: 2,
-                  backgroundColor: isCompleted ? LightColors.accentStrong : LightColors.dividerStrong,
+                  backgroundColor: isCompleted ? LightColors.primary : LightColors.dividerStrong,
                   // Circle is 28px tall — 13 + half the 2px line centres
                   // the connector on the circle midline (y = 14).
                   marginTop: 13,

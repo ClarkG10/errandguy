@@ -194,7 +194,8 @@ export function QuickBookFAB({
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Quick book a new errand"
+        accessibilityLabel="Book an errand"
+        accessibilityHint="Opens the errand types to choose from"
         testID={testID ?? 'quick-book-fab'}
         onPress={handlePress}
         onPressIn={handlePressIn}
@@ -227,7 +228,15 @@ export function QuickBookFAB({
           style={StyleSheet.absoluteFill}
         />
         <View pointerEvents="none" style={styles.innerHighlight} />
-        <Plus size={ICON} color={LightColors.textInverse} strokeWidth={2.6} />
+        {/* The glyph sits in its own View, after the fills. On web the
+            gradient and highlight are position:absolute, and absolutely
+            positioned boxes paint OVER a bare (position:static) <svg> no
+            matter the DOM order — which left an empty blue disc. A View is
+            position:relative there, so DOM order wins again and the plus
+            paints on top; zIndex makes the intent explicit on native too. */}
+        <View pointerEvents="none" style={styles.glyph}>
+          <Plus size={ICON} color={LightColors.textInverse} strokeWidth={2.6} />
+        </View>
       </Pressable>
     </Animated.View>
   );
@@ -243,6 +252,11 @@ const styles = StyleSheet.create({
     // rather than pops. Android keeps a stronger explicit lift.
     ...Elevation.primary,
     elevation: 9,
+  },
+  glyph: {
+    zIndex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   innerHighlight: {
     position: 'absolute',

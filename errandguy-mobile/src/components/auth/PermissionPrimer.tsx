@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  Pressable,
   Image,
   ScrollView,
   AppState,
@@ -53,6 +52,8 @@ export interface PermissionPrimerProps {
   requestErrorMessage: string;
   /** Screen-reader hint on the "Not now" skip explaining the consequence. */
   skipHint: string;
+  /** The alternative's label — the way on without the permission. */
+  skipLabel?: string;
   onNext: () => void;
 }
 
@@ -90,6 +91,7 @@ export function PermissionPrimer({
   allowLabel,
   requestErrorMessage,
   skipHint,
+  skipLabel = 'Not now',
   onNext,
 }: PermissionPrimerProps) {
   const { width, vScale, isLandscape, contentMaxWidth } = useResponsive();
@@ -209,8 +211,10 @@ export function PermissionPrimer({
     advanceNow();
   };
 
+  // Pattern 7: once the OS won't ask again, the one way back is the app's
+  // page in Settings — the button says exactly that.
   const buttonTitle =
-    granted || unavailable ? 'Continue' : !canAskAgain ? 'Open Settings to enable' : allowLabel;
+    granted || unavailable ? 'Continue' : !canAskAgain ? 'Allow in Settings' : allowLabel;
 
   // Content-priority in landscape: the checklist is the core content, the
   // illustration is decoration — hide it rather than clip the CTA.
@@ -268,9 +272,9 @@ export function PermissionPrimer({
               }}
             >
               <View style={s.whyChip}>
-                <Check size={14} color={LightColors.primary} strokeWidth={3} />
+                <Check size={16} color={LightColors.primary} strokeWidth={2.6} />
               </View>
-              <Text className="text-[14px] font-montserrat text-textSecondary flex-1">
+              <Text className="text-[15px] font-montserrat text-textSecondary flex-1">
                 {reason}
               </Text>
             </MotiView>
@@ -279,8 +283,8 @@ export function PermissionPrimer({
 
         {privacyNote && (
           <View style={s.privacyRow}>
-            <Lock size={13} color={LightColors.textMuted} />
-            <Text className="text-[12px] font-montserrat text-textTertiary flex-shrink text-center">
+            <Lock size={16} color={LightColors.textSecondary} />
+            <Text className="text-[13px] font-montserrat text-textSecondary flex-shrink text-center">
               {privacyNote}
             </Text>
           </View>
@@ -326,27 +330,25 @@ export function PermissionPrimer({
 
       <View style={[s.footer, maxWidthClamp]}>
         <Button title={buttonTitle} fullWidth size="lg" onPress={handleAllow} />
-        {/* Skip stays in layout when granted so the CTA never jumps at the
-            moment the user reaches to tap it. */}
-        <Pressable
-          onPress={handleSkip}
-          disabled={granted}
-          hitSlop={{ top: 0, bottom: 12, left: 24, right: 24 }}
-          style={({ pressed }) => [
-            s.skipBtn,
-            granted && { opacity: 0 },
-            !granted && pressed && { opacity: 0.55 },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Not now"
-          accessibilityHint={skipHint}
+        {/* The alternative, as an outline button (pattern 7). It stays in
+            layout when granted so the CTA never jumps at the moment the user
+            reaches to tap it. */}
+        <View
+          style={granted ? s.skipHidden : null}
           accessibilityElementsHidden={granted}
           importantForAccessibility={granted ? 'no-hide-descendants' : 'auto'}
+          pointerEvents={granted ? 'none' : 'auto'}
         >
-          <Text className="text-[14px] font-montserrat text-textSecondary text-center">
-            Not now
-          </Text>
-        </Pressable>
+          <Button
+            title={skipLabel}
+            variant="outline"
+            fullWidth
+            size="lg"
+            disabled={granted}
+            onPress={handleSkip}
+            accessibilityHint={skipHint}
+          />
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -360,9 +362,9 @@ const s = StyleSheet.create({
   whyList: { marginTop: 12, alignSelf: 'stretch', gap: 12, paddingHorizontal: 8 },
   whyRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   whyChip: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: LightColors.primary50,
     alignItems: 'center',
     justifyContent: 'center',
@@ -399,6 +401,6 @@ const s = StyleSheet.create({
     backgroundColor: LightColors.warningLight,
   },
   blockedTextCol: { flex: 1, marginLeft: 6 },
-  footer: { paddingBottom: 28, gap: 12 },
-  skipBtn: { minHeight: 44, paddingVertical: 12, justifyContent: 'center' },
+  footer: { paddingBottom: 28, gap: 10 },
+  skipHidden: { opacity: 0 },
 });

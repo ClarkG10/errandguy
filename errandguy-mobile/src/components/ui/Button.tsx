@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import {
   Pressable,
   Text,
+  View,
   Animated,
   StyleSheet,
   Platform,
@@ -59,6 +60,13 @@ interface ButtonProps {
   style?: ViewStyle;
   testID?: string;
   accessibilityHint?: string;
+  /**
+   * Why the button can't be pressed yet, e.g. "Enter your phone or email".
+   * Shown as a caption under the button (and read as its hint) while it is
+   * `disabled` — a greyed-out CTA with no reason reads as broken. Passing it
+   * wraps the button in a column, so leave it out where layout is tight.
+   */
+  disabledReason?: string;
   /** Extra touch area beyond the painted bounds. Defaults per size so every
    *  button clears the 44dp accessibility floor without changing its looks —
    *  pass a value only to resolve an overlap with a neighbouring control. */
@@ -149,6 +157,7 @@ export function Button({
   testID,
   accessibilityHint,
   hitSlop,
+  disabledReason,
 }: ButtonProps) {
   const scale = useRef(new Animated.Value(1)).current;
   const reduceMotion = useReducedMotion();
@@ -164,6 +173,9 @@ export function Button({
   const iconSize = mScale(base.icon);
 
   const isDisabled = disabled || loading;
+  // Only a deliberate disable explains itself — a loading button already
+  // says what it is doing through its label.
+  const showReason = !!disabledReason && !!disabled && !loading;
   const useGradient = gradient && variant === 'primary' && !isDisabled;
 
   const handlePressIn = () => {
@@ -265,7 +277,7 @@ export function Button({
   const sharedPressableProps = {
     accessibilityRole: 'button' as const,
     accessibilityLabel: title,
-    accessibilityHint,
+    accessibilityHint: showReason ? disabledReason : accessibilityHint,
     accessibilityState: { disabled: isDisabled, busy: loading },
     hitSlop: hitSlop ?? SIZE_HIT_SLOP[size],
     testID,
@@ -279,7 +291,7 @@ export function Button({
         : { color: `${LightColors.textInverse}29`, borderless: false },
   };
 
-  return (
+  const button = (
     <Animated.View
       style={[
         fullWidth && bs.full,
@@ -328,6 +340,22 @@ export function Button({
       )}
     </Animated.View>
   );
+
+  if (disabledReason === undefined) return button;
+  return (
+    <View style={fullWidth ? bs.full : undefined}>
+      {button}
+      {showReason ? (
+        <Text
+          style={bs.reason}
+          maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
+          testID={testID ? `${testID}-disabled-reason` : undefined}
+        >
+          {disabledReason}
+        </Text>
+      ) : null}
+    </View>
+  );
 }
 
 const bs = StyleSheet.create({
@@ -344,5 +372,13 @@ const bs = StyleSheet.create({
   full: { width: '100%' },
   disabled: { opacity: 0.45 },
   text: { letterSpacing: 0.1 },
+  reason: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.textSecondary,
+  },
 });
 

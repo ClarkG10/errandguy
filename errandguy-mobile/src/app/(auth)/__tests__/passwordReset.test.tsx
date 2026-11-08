@@ -49,7 +49,7 @@ describe('forgot password — step 1 (email)', () => {
     expect(screen.getByText(/6-digit code/)).toBeTruthy();
 
     await act(async () => {
-      fireEvent.press(screen.getByText('Send Code'));
+      fireEvent.press(screen.getByText('Send code'));
     });
 
     expect(forgot).toHaveBeenCalledWith('ana@example.com');
@@ -63,8 +63,8 @@ describe('forgot password — step 1 (email)', () => {
 describe('forgot password — step 2 (code + new password)', () => {
   const fill = (screen: ReturnType<typeof wrap>, password = 'Errand#2026', confirm = password) => {
     fireEvent.changeText(screen.getByLabelText('Digit 1 of 6'), '123456');
-    fireEvent.changeText(screen.getByLabelText('New Password'), password);
-    fireEvent.changeText(screen.getByLabelText('Confirm New Password'), confirm);
+    fireEvent.changeText(screen.getByLabelText('New password'), password);
+    fireEvent.changeText(screen.getByLabelText('Confirm new password'), confirm);
   };
 
   beforeEach(() => {
@@ -84,7 +84,7 @@ describe('forgot password — step 2 (code + new password)', () => {
     fill(screen);
 
     await act(async () => {
-      fireEvent.press(screen.getByText('Reset Password'));
+      fireEvent.press(screen.getByText('Reset password'));
     });
 
     expect(resetPw).toHaveBeenCalledWith({
@@ -100,14 +100,20 @@ describe('forgot password — step 2 (code + new password)', () => {
     );
   });
 
-  it('holds the same password rules as sign-up', async () => {
+  it('holds the same password rules as sign-up, and says how to fix the field', async () => {
     const screen = wrap(<ResetPasswordScreen />);
     fill(screen, 'weakpass', 'weakpass');
     await act(async () => {
-      fireEvent.press(screen.getByText('Reset Password'));
+      fireEvent(screen.getByLabelText('New password'), 'blur');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByText('Reset password'));
     });
     expect(resetPw).not.toHaveBeenCalled();
-    expect(screen.getByText('Must contain an uppercase letter')).toBeTruthy();
+    // Inline, under the exact field, as the fix — not a rule restated.
+    await waitFor(() => expect(screen.getByText('Add an uppercase letter (A–Z)')).toBeTruthy());
+    // The CTA stays disabled and says why.
+    expect(screen.getByText('Your new password needs the items still unticked above.')).toBeTruthy();
   });
 
   it('puts a wrong code back on the code cells and stays put', async () => {
@@ -115,18 +121,18 @@ describe('forgot password — step 2 (code + new password)', () => {
     const screen = wrap(<ResetPasswordScreen />);
     fill(screen);
     await act(async () => {
-      fireEvent.press(screen.getByText('Reset Password'));
+      fireEvent.press(screen.getByText('Reset password'));
     });
     await waitFor(() => expect(screen.getByText('That code is wrong or has expired.')).toBeTruthy());
     expect(mockRouter.replace).not.toHaveBeenCalled();
   });
 
-  it('will not submit without all six digits', async () => {
+  it('keeps the CTA disabled — and says why — without all six digits', async () => {
     const screen = wrap(<ResetPasswordScreen />);
-    fireEvent.changeText(screen.getByLabelText('New Password'), 'Errand#2026');
-    fireEvent.changeText(screen.getByLabelText('Confirm New Password'), 'Errand#2026');
+    fireEvent.changeText(screen.getByLabelText('New password'), 'Errand#2026');
+    fireEvent.changeText(screen.getByLabelText('Confirm new password'), 'Errand#2026');
     await act(async () => {
-      fireEvent.press(screen.getByText('Reset Password'));
+      fireEvent.press(screen.getByText('Reset password'));
     });
     expect(resetPw).not.toHaveBeenCalled();
     expect(screen.getByText('Enter the 6-digit code from the email.')).toBeTruthy();

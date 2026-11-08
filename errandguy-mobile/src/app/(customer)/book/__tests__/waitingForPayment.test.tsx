@@ -102,7 +102,7 @@ describe('waiting for a GCash/Maya payment', () => {
   it('says it is waiting for the payment — not looking for a runner', () => {
     const { getByText, queryByText } = renderScreen();
     expect(getByText('Waiting for your payment')).toBeTruthy();
-    expect(getByText('Complete payment')).toBeTruthy();
+    expect(getByText(/^Pay /)).toBeTruthy();
     expect(queryByText('Looking for a runner nearby…')).toBeNull();
     // The customer can still walk away instead of paying.
     expect(getByText('Cancel errand')).toBeTruthy();
@@ -113,7 +113,7 @@ describe('waiting for a GCash/Maya payment', () => {
     const { getByText } = renderScreen();
 
     await act(async () => {
-      fireEvent.press(getByText('Complete payment'));
+      fireEvent.press(getByText(/^Pay /));
     });
 
     expect(openCheckoutUrl).toHaveBeenCalledWith(CHECKOUT, PAYMENT_RETURN_URL);
@@ -133,12 +133,12 @@ describe('waiting for a GCash/Maya payment', () => {
     const { getByText } = renderScreen();
 
     await act(async () => {
-      fireEvent.press(getByText('Complete payment'));
+      fireEvent.press(getByText(/^Pay /));
     });
 
     expect(getByText('Resume payment')).toBeTruthy();
     expect(getByText(CHECKOUT_CANCELLED_MESSAGE)).toBeTruthy();
-    expect(CHECKOUT_CANCELLED_MESSAGE).toMatch(/Complete payment/);
+    expect(CHECKOUT_CANCELLED_MESSAGE).toMatch(/tap Pay/);
     // The old copy promised paying later "from the errand" — a button that
     // didn't exist.
     expect(CHECKOUT_CANCELLED_MESSAGE).not.toMatch(/from the errand/i);
@@ -150,7 +150,7 @@ describe('waiting for a GCash/Maya payment', () => {
     const { getByText } = renderScreen();
 
     await act(async () => {
-      fireEvent.press(getByText('Complete payment'));
+      fireEvent.press(getByText(/^Pay /));
     });
 
     expect(openCheckoutUrl).not.toHaveBeenCalled();
@@ -160,7 +160,7 @@ describe('waiting for a GCash/Maya payment', () => {
     useBookingStore.setState({ activeBooking: unpaid({ checkout_url: null }) });
     const { getByText, queryByText } = renderScreen();
     expect(getByText('Waiting for your payment')).toBeTruthy();
-    expect(queryByText('Complete payment')).toBeNull();
+    expect(queryByText(/^Pay /)).toBeNull();
   });
 
   it('hands over to the ordinary search the moment the payment is confirmed', () => {
@@ -171,7 +171,7 @@ describe('waiting for a GCash/Maya payment', () => {
 
     expect(getByText('Looking for a runner nearby…')).toBeTruthy();
     expect(queryByText('Waiting for your payment')).toBeNull();
-    expect(queryByText('Complete payment')).toBeNull();
+    expect(queryByText(/^Pay /)).toBeNull();
   });
 
   it('keeps the old flow against a server that sends no awaiting_payment', () => {
@@ -239,7 +239,7 @@ describe('the payment verdict after Complete payment', () => {
   const openAndVerify = async (screen: ReturnType<typeof renderScreen>) => {
     (openCheckoutUrl as jest.Mock).mockResolvedValue('opened');
     await act(async () => {
-      fireEvent.press(screen.getByText('Complete payment'));
+      fireEvent.press(screen.getByText(/^Pay /));
     });
     expect(usePaymentStore.getState().attempt?.status).toBe('verifying');
   };

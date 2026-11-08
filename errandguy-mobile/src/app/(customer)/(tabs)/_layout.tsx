@@ -1,12 +1,8 @@
 import { Tabs } from 'expo-router';
-import { View } from 'react-native';
+import { Platform, Text, View, type TextStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
-import {
-  TabBarItem,
-  TAB_LABEL_STYLE,
-  cappedTabBarLabel,
-} from '../../../components/ui/TabBarItem';
+import { TabBarItem, TAB_LABEL_STYLE } from '../../../components/ui/TabBarItem';
 import { HidingTabBar } from '../../../components/ui/HidingTabBar';
 import { QuickBookFAB } from '../../../components/ui/QuickBookFAB';
 import {
@@ -14,6 +10,7 @@ import {
   TAB_BAR_CENTER_GAP,
 } from '../../../constants/tabLayout';
 import { LightColors } from '../../../constants/colors';
+import { CHROME_MAX_FONT_SCALE } from '../../../constants/fontScale';
 
 const ACTIVE = LightColors.primary;
 // textTertiary clears the 3:1 non-text glyph floor that textMuted failed
@@ -23,13 +20,36 @@ const INACTIVE = LightColors.textTertiary;
 
 // Screen-level tabBarItemStyle replaces (not merges with) the
 // navigator-level one, so the middle tabs spread this base and add
-// their half of the centre gap on top.
+// their half of the centre gap on top. No horizontal padding: the longest
+// label, "Notifications", needs every point of a 360pt-wide phone's slot.
 const ITEM_STYLE = {
   height: BAR_HEIGHT - 12,
   paddingTop: 0,
   paddingBottom: 0,
-  paddingHorizontal: 2,
+  paddingHorizontal: 0,
 } as const;
+
+// 10pt labels — the platform tab-bar size (iOS draws its own at 10pt). At the
+// shared 11pt, "Notifications" overran its slot by under a point on a 390pt
+// phone and was cut to "Notificatio…" on every smaller one.
+const LABEL_STYLE: TextStyle = { ...TAB_LABEL_STYLE, fontSize: 10, letterSpacing: 0 };
+
+// Android only, like the shared cappedTabBarLabel: the navigator's own label
+// grows without limit there, so cap it at the chrome font scale — at this
+// bar's 10pt size. iOS keeps the navigator's plain-string label (VoiceOver's
+// "tab, 1 of 4" depends on it).
+const androidTabLabel =
+  Platform.OS === 'android'
+    ? ({ color, children }: { color: string; children: string }) => (
+        <Text
+          numberOfLines={1}
+          maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
+          style={[{ textAlign: 'center', backgroundColor: 'transparent' }, LABEL_STYLE, { color }]}
+        >
+          {children}
+        </Text>
+      )
+    : undefined;
 
 export default function CustomerTabsLayout() {
   const unreadCount = useNotificationStore((s) => s.unreadCount);
@@ -69,9 +89,9 @@ export default function CustomerTabsLayout() {
         // Short word under every icon: an icon-only bar left first-time
         // customers guessing what "list" and "person" lead to.
         tabBarShowLabel: true,
-        tabBarLabelStyle: TAB_LABEL_STYLE,
-        // Capped at the chrome font scale (see cappedTabBarLabel).
-        tabBarLabel: cappedTabBarLabel,
+        tabBarLabelStyle: LABEL_STYLE,
+        // Capped at the chrome font scale on Android (see androidTabLabel).
+        tabBarLabel: androidTabLabel,
         tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: LightColors.surface,
@@ -116,13 +136,15 @@ export default function CustomerTabsLayout() {
       <Tabs.Screen
         name="notifications"
         options={{
-          title: 'Alerts',
+          // Same word as the screen's own title — the tab used to say
+          // "Alerts" over a page headed "Notifications".
+          title: 'Notifications',
           // Surface the badge count to screen readers — the visual
           // badge lives in a pointerEvents-none view VoiceOver skips.
           tabBarAccessibilityLabel:
             unreadCount > 0
-              ? `Alerts, ${unreadCount > 9 ? 'more than 9' : unreadCount} unread`
-              : 'Alerts',
+              ? `Notifications, ${unreadCount > 9 ? 'more than 9' : unreadCount} unread`
+              : 'Notifications',
           tabBarItemStyle: {
             ...itemStyle,
             marginLeft: TAB_BAR_CENTER_GAP / 2,

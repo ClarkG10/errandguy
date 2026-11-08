@@ -224,7 +224,7 @@ describe('payout method — one saved', () => {
     expect(screen.queryByLabelText('Save payout method')).toBeNull();
 
     fireEvent.changeText(screen.getByLabelText('Amount to withdraw'), '200');
-    fireEvent.press(screen.getByLabelText('Request Payout'));
+    fireEvent.press(screen.getByLabelText('Request payout'));
     await waitFor(() =>
       expect(screen.getByText(/Funds will be transferred to GCash •••• 4567/)).toBeTruthy(),
     );
@@ -312,5 +312,63 @@ describe('payout screen — money owed from cash errands', () => {
     const screen = renderScreen();
 
     expect(screen.getByText(message)).toBeTruthy();
+  });
+});
+
+describe('the amount field and the Request button (patterns 9 and 10)', () => {
+  const gcash = profile({
+    payout_channel: 'gcash',
+    ewallet_number: '09171234567',
+    payout_account_name: 'Juan Dela Cruz',
+  });
+
+  it('says why Request is off before anything is typed', () => {
+    startWith(gcash);
+    const screen = renderScreen();
+    expect(screen.getByText('Enter an amount to withdraw.')).toBeTruthy();
+  });
+
+  it('flags a too-small amount under the field, with the fix, and does not repeat it under the button', () => {
+    startWith(gcash);
+    const screen = renderScreen();
+    fireEvent.changeText(screen.getByLabelText('Amount to withdraw'), '50');
+    expect(
+      screen.getByText('The minimum payout is ₱100.00. Enter at least that much.'),
+    ).toBeTruthy();
+    expect(screen.queryByText('Enter an amount to withdraw.')).toBeNull();
+    expect(screen.queryByTestId('payout-amount-valid', { includeHiddenElements: true })).toBeNull();
+  });
+
+  it('ticks an amount that passed both checks', () => {
+    startWith(gcash);
+    const screen = renderScreen();
+    fireEvent.changeText(screen.getByLabelText('Amount to withdraw'), '200');
+    // Decorative (hidden from screen readers), so it is queried with them.
+    expect(screen.getByTestId('payout-amount-valid', { includeHiddenElements: true })).toBeTruthy();
+  });
+
+  it('confirms a request with the amount, where it goes and when — not a toast', async () => {
+    startWith(gcash);
+    (runnerService.requestPayout as jest.Mock).mockResolvedValue({
+      data: { message: 'We’ll send ₱200.00 to GCash •••• 4567 within 1–3 business days.' },
+    });
+    const toastSuccess = jest.spyOn(toast, 'success');
+    const screen = renderScreen();
+
+    fireEvent.changeText(screen.getByLabelText('Amount to withdraw'), '200');
+    fireEvent.press(screen.getByLabelText('Request payout'));
+    await waitFor(() => expect(screen.getByText(/Funds will be transferred/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Request'), { stopPropagation: () => {} });
+    });
+
+    await waitFor(() => expect(screen.getByText('Payout requested')).toBeTruthy());
+    expect(screen.getByText('₱200.00')).toBeTruthy();
+    expect(screen.getByText('to GCash •••• 4567')).toBeTruthy();
+    expect(
+      screen.getByText('We’ll send ₱200.00 to GCash •••• 4567 within 1–3 business days.'),
+    ).toBeTruthy();
+    expect(toastSuccess).not.toHaveBeenCalled();
+    toastSuccess.mockRestore();
   });
 });

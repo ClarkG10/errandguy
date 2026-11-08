@@ -21,12 +21,12 @@ import { paymentService } from '../../../services/payment.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { useWalletSummary } from '../../../hooks/useWalletSummary';
 import { CacheTTL } from '../../../services/cache.service';
-import { EmptyState } from '../../../components/ui/EmptyState';
-import { Illustration } from '../../../components/ui/Illustration';
+import { StatePanel } from '../../../components/customer/home/StatePanel';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { Skeleton } from '../../../components/ui/Skeleton';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { Spinner } from '../../../components/ui/Spinner';
 import { Eyebrow } from '../../../components/ui/Typography';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
@@ -176,6 +176,16 @@ export default function WalletScreen() {
   const bonusCredit = summaryQ.data?.bonus_balance ?? 0;
   // The server's floor — the same figure the withdraw screen checks.
   const withdrawMin = withdrawMinimum(summaryQ.data);
+  // Pattern 9: Withdraw is disabled while nothing can go out, with the reason
+  // right under it. The server stays the authority on both numbers (the
+  // summary's withdrawable figure and its minimum); until the summary loads
+  // the button stays live and the withdraw screen checks for itself.
+  const withdrawBlockedReason =
+    withdrawable == null || withdrawable >= withdrawMin
+      ? null
+      : withdrawable <= 0 && bonusCredit > 0
+        ? 'Bonus credit can’t be withdrawn — it pays for your next errands.'
+        : `You can withdraw to GCash or Maya once you have ${formatCurrency(withdrawMin)} or more.`;
 
   // Page 1 is cached via useQuery (cache-first); older pages append on scroll —
   // the history used to stop at the newest 20 rows, with no way to see more.
@@ -267,6 +277,7 @@ export default function WalletScreen() {
   }, [txPage, txFilter]);
 
   const openWithdraw = useCallback(() => {
+    if (withdrawBlockedReason) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     if (withdrawable != null && withdrawable <= 0) {
       toast.info(
@@ -277,7 +288,7 @@ export default function WalletScreen() {
       return;
     }
     router.push('/(customer)/wallet/withdraw');
-  }, [withdrawable, bonusCredit, router]);
+  }, [withdrawBlockedReason, withdrawable, bonusCredit, router]);
 
   const [exporting, setExporting] = useState(false);
 
@@ -315,17 +326,17 @@ export default function WalletScreen() {
     const buckets: Record<string, WalletTransaction[]> = {
       Today: [],
       Yesterday: [],
-      'This Month': [],
+      'This month': [],
       Earlier: [],
     };
     for (const t of txList) {
       const ts = new Date(t.created_at).getTime();
       if (ts >= startOfToday) buckets.Today.push(t);
       else if (ts >= startOfYesterday) buckets.Yesterday.push(t);
-      else if (ts >= startOfMonth) buckets['This Month'].push(t);
+      else if (ts >= startOfMonth) buckets['This month'].push(t);
       else buckets.Earlier.push(t);
     }
-    return (['Today', 'Yesterday', 'This Month', 'Earlier'] as const)
+    return (['Today', 'Yesterday', 'This month', 'Earlier'] as const)
       .filter((k) => buckets[k].length > 0)
       .map((title) => ({ title, data: buckets[title] }));
   }, [txList]);
@@ -521,28 +532,14 @@ export default function WalletScreen() {
           ...Elevation.primary,
         }}
       >
-        {/* Decorative 3D wallet — first child so it renders BEHIND the
-            balance text/buttons (text stays readable) and the card's
-            overflow:hidden clips its right edge into the corner. Subtle
-            ambient hero object beside the balance, not a focal element. */}
-        <Illustration
-          name="3d-wallet"
-          size={72}
-          style={{ position: 'absolute', top: 34, right: 10, opacity: 0.9 }}
-        />
-
-        <View className="flex-row items-center justify-between mb-1">
-          <View className="flex-row items-center">
-            <Wallet size={14} color="rgba(255,255,255,0.7)" strokeWidth={2} />
-            <Text className="ml-2 text-xs font-montserrat-semi text-white/60 uppercase tracking-wider">
-              Available Balance
-            </Text>
-          </View>
-          <View className="flex-row items-center bg-white/10 px-2 py-0.5 rounded-md">
-            <Text className="text-[10px] font-montserrat-semi text-white">
-              PHP
-            </Text>
-          </View>
+        {/* No decorative 3D wallet and no "PHP" tag any more (rules 1 and
+            13): the ₱ sign already says the currency, and the figure is the
+            only thing this card has to show. */}
+        <View className="flex-row items-center mb-1">
+          <Wallet size={14} color="rgba(255,255,255,0.8)" strokeWidth={2} />
+          <Text className="ml-2 text-xs font-montserrat-semi text-white/80 uppercase tracking-wider">
+            Available balance
+          </Text>
         </View>
 
         {(() => {
@@ -574,7 +571,7 @@ export default function WalletScreen() {
             );
           }
           if (numericBalance == null) {
-            return <View className="mt-2 h-10 w-44 rounded-lg bg-white/15" />;
+            return <View className="mt-2 h-10 w-44 rounded-lg bg-white/20" />;
           }
           // An account that is also a runner can owe money from cash errands;
           // the balance is then negative and says so in the server's words.
@@ -589,7 +586,7 @@ export default function WalletScreen() {
                 >
                   −{formatCurrency(Math.abs(numericBalance))}
                 </Text>
-                <Text className="text-[11px] font-montserrat text-white/85 mt-1.5">
+                <Text className="text-[11px] font-montserrat text-white/80 mt-1.5">
                   {cashDebtMessage(Math.abs(numericBalance), cashDebtLimit(summaryQ.data))}
                 </Text>
               </>
@@ -609,25 +606,26 @@ export default function WalletScreen() {
               </Text>
               {/* Under the server's minimum nothing can go out yet, so say what
                   it takes rather than offering an amount that would be refused. */}
-              {withdrawable != null ? (
-                <Text className="text-[11px] font-montserrat text-white/85 mt-1.5">
-                  {withdrawable >= withdrawMin
-                    ? `${formatCurrency(withdrawable)} can be withdrawn to GCash or Maya`
-                    : `You can withdraw to GCash or Maya once you have ${formatCurrency(withdrawMin)} or more`}
+              {/* Below the server's minimum the reason sits under the
+                  (disabled) Withdraw button instead — said once, where the
+                  question comes up. */}
+              {withdrawable != null && withdrawable >= withdrawMin ? (
+                <Text className="text-[12px] font-montserrat text-white/90 mt-1.5">
+                  {`${formatCurrency(withdrawable)} can be withdrawn to GCash or Maya`}
                 </Text>
               ) : null}
               {/* Credit left from the retired referral program: it pays for
                   errands (first, before the balance) but can never be cashed
                   out, so it sits apart from the withdrawable figure. */}
               {bonusCredit > 0 ? (
-                <View className="flex-row items-start mt-1.5 pr-16">
+                <View className="flex-row items-start mt-1.5">
                   <Gift
                     size={12}
                     color="rgba(255,255,255,0.85)"
                     strokeWidth={2}
                     style={{ marginTop: 2 }}
                   />
-                  <Text className="flex-1 ml-1.5 text-[11px] font-montserrat text-white/85">
+                  <Text className="flex-1 ml-1.5 text-[11px] font-montserrat text-white/80">
                     +{formatCurrency(bonusCredit)} bonus credit — spend it on errands. It
                     can’t be withdrawn.
                   </Text>
@@ -637,39 +635,49 @@ export default function WalletScreen() {
           );
         })()}
 
-        <View className="mt-5 flex-row gap-2">
+        {/* The card's one action. (A "Bookings" button used to sit beside it:
+            it only opened the Activity tab — already one tap away in the tab
+            bar — and competed with Withdraw. Where GCash, Maya and cash
+            payments live is now said in the empty ledger below, which is
+            where that question comes up.) */}
+        <View className="mt-5">
           <Pressable
             onPress={openWithdraw}
-            className="flex-1 bg-white py-3.5 items-center"
-            style={({ pressed }) => [
-              { borderRadius: 16, overflow: 'hidden' },
-              pressed && { opacity: 0.85 },
+            disabled={!!withdrawBlockedReason}
+            className="active:opacity-80"
+            style={[
+              {
+                borderRadius: 16,
+                overflow: 'hidden',
+                minHeight: 48,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: withdrawBlockedReason
+                  ? 'rgba(255,255,255,0.22)'
+                  : LightColors.surface,
+              },
             ]}
             android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
             accessibilityRole="button"
             accessibilityLabel="Withdraw to GCash or Maya"
+            accessibilityState={{ disabled: !!withdrawBlockedReason }}
+            accessibilityHint={withdrawBlockedReason ?? undefined}
+            testID="wallet-withdraw"
           >
-            <Text className="text-sm font-montserrat-bold text-textPrimary">
+            <Text
+              className="text-[15px] font-montserrat-bold"
+              style={{
+                color: withdrawBlockedReason ? 'rgba(255,255,255,0.85)' : LightColors.textPrimary,
+              }}
+            >
               Withdraw
             </Text>
           </Pressable>
-          <Pressable
-            onPress={() => router.push('/(customer)/(tabs)/activity' as any)}
-            className="flex-1 py-3.5 items-center"
-            style={({ pressed }) => [
-              { borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
-              pressed && { opacity: 0.85 },
-            ]}
-            android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
-            accessibilityRole="button"
-            accessibilityLabel="Bookings"
-          >
-            {/* Routes to the Activity (bookings) tab — labelled honestly so
-                it isn't confused with the wallet transaction history below. */}
-            <Text className="text-sm font-montserrat-bold text-white">
-              Bookings
+          {withdrawBlockedReason ? (
+            <Text className="text-[12px] font-montserrat text-white/90 mt-2 text-center">
+              {withdrawBlockedReason}
             </Text>
-          </Pressable>
+          ) : null}
         </View>
       </LinearGradient>
 
@@ -722,6 +730,8 @@ export default function WalletScreen() {
           syncing={balanceQ.isStale || summaryQ.isStale || txQ.isStale}
           updatedAt={balanceQ.updatedAt}
           error={!!balanceQ.error}
+          // Pattern 4: offline, the cached balance and ledger stay.
+          offline={!!balanceQ.servedFromCacheOffline || !!txQ.servedFromCacheOffline}
           onRetry={onRefresh}
           align="flex-start"
         />
@@ -836,7 +846,12 @@ export default function WalletScreen() {
         }
         ListEmptyComponent={
           txInitialLoading ? (
-            <TransactionsSkeleton />
+            <View>
+              <TransactionsSkeleton />
+              <View className="px-5 mt-3">
+                <SlowNetworkNotice loading onRetry={() => void onRefresh()} />
+              </View>
+            </View>
           ) : txFailed ? (
             <ErrorState
               title="Couldn't load transactions"
@@ -844,11 +859,25 @@ export default function WalletScreen() {
               onRetry={() => txQ.refresh()}
             />
           ) : (
-            <EmptyState
-              illustration={<Illustration name="empty-wallet" size={168} />}
-              title="No transactions yet"
-              description="Your wallet transaction history will appear here"
-            />
+            // Pattern 1: what lands here, and the one place to look instead.
+            // A filtered view that's empty offers the full list back.
+            txFilter ? (
+              <StatePanel
+                icon={Wallet}
+                title={`No ${(TX_FILTERS.find((f) => f.key === txFilter)?.label ?? '').toLowerCase()} yet`}
+                description="Nothing of this kind has moved through your wallet."
+                actionLabel="Show all transactions"
+                onAction={() => setTxFilter(null)}
+              />
+            ) : (
+              <StatePanel
+                icon={Wallet}
+                title="No wallet activity yet"
+                description="Refunds, errands you pay from your wallet and withdrawals show up here. Errands paid with GCash, Maya or cash are listed in Activity."
+                actionLabel="See your errands"
+                onAction={() => router.push('/(customer)/(tabs)/activity' as any)}
+              />
+            )
           )
         }
       />

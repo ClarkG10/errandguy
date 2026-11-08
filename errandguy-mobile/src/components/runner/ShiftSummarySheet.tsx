@@ -82,10 +82,13 @@ export function ShiftSummarySheet({ shift, onClose }: Props) {
         </Text>
 
         {/* The number they came for. Payout only — see the note above. */}
-        <Text className="text-[34px] font-montserrat-bold tabular-nums text-textPrimary mt-1">
+        <Text
+          className="text-[34px] font-montserrat-bold tabular-nums text-textPrimary mt-1"
+          style={{ fontVariant: ['tabular-nums'] }}
+        >
           {formatCurrency(shift?.earnings ?? 0)}
         </Text>
-        <Text className="text-[12px] font-inter text-textTertiary mt-0.5">
+        <Text className="text-[13px] font-inter text-textSecondary mt-0.5">
           {shift && shift.tips > 0 ? 'earned, plus tips below' : 'earned this shift'}
         </Text>
 
@@ -103,7 +106,10 @@ export function ShiftSummarySheet({ shift, onClose }: Props) {
                   {row.label}
                 </Text>
               </View>
-              <Text className="text-[15px] font-inter-semi tabular-nums text-textPrimary">
+              <Text
+                className="text-[15px] font-inter-semi tabular-nums text-textPrimary"
+                style={{ fontVariant: ['tabular-nums'] }}
+              >
                 {row.value}
               </Text>
             </View>
@@ -111,24 +117,25 @@ export function ShiftSummarySheet({ shift, onClose }: Props) {
         </View>
 
         {shift?.errands === 0 && (
-          <Text className="text-[12px] font-inter text-textTertiary mt-4">
+          <Text className="text-[13px] leading-[18px] font-inter text-textSecondary mt-4">
             No errands came through this time. Busier hours are usually lunch and
             early evening — the demand map shows where.
           </Text>
         )}
 
+        {/* One primary (Done); the detour is the quieter outline below it. */}
         <View className="mt-6">
+          <Button title="Done" fullWidth size="lg" onPress={onClose} />
+          <View className="h-2" />
           <Button
             title="See my earnings"
-            variant="secondary"
+            variant="ghost"
             fullWidth
             onPress={() => {
               onClose();
               router.push('/(runner)/(tabs)/earnings');
             }}
           />
-          <View className="h-2" />
-          <Button title="Done" fullWidth onPress={onClose} />
         </View>
       </View>
     </BottomSheet>

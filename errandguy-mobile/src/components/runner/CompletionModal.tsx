@@ -10,7 +10,9 @@ import { ConfirmModal } from '../ui/ConfirmModal';
 import { Input } from '../ui/Input';
 import { SignaturePad, type SignaturePadHandle } from './SignaturePad';
 import { LightColors } from '../../constants/colors';
+import { Radius } from '../../constants/radius';
 import { useResponsive } from '../../constants/responsive';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { toast } from '../../stores/toastStore';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { mediaSource } from '../../utils/mediaSource';
@@ -71,7 +73,7 @@ export function CompletionModal({
   bookingId,
   deliveryPhotoUrl,
   requiresSignature = true,
-  title = 'Complete Errand',
+  title = 'Complete errand',
   subtitle,
   collectAmount,
   canSkipSignature = false,
@@ -93,6 +95,7 @@ export function CompletionModal({
   const { height } = useResponsive();
   const padHeight = height < 700 ? 150 : 180;
   const insets = useSafeAreaInsets();
+  const reduceMotion = useReducedMotion();
 
   const handleClear = () => {
     padRef.current?.clear();
@@ -179,11 +182,22 @@ export function CompletionModal({
             fall through to the dismiss backdrop. */}
         <Pressable onPress={(e) => e.stopPropagation()}>
           <MotiView
-            from={{ translateY: 60, opacity: 0 }}
+            from={reduceMotion ? { opacity: 1 } : { translateY: 60, opacity: 0 }}
             animate={{ translateY: 0, opacity: 1 }}
-            transition={{ type: 'spring', damping: 22, stiffness: 220, mass: 0.8 }}
-            className="bg-surface pt-3 rounded-t-3xl"
-            style={{ maxHeight: '92%' }}
+            transition={
+              reduceMotion
+                ? { type: 'timing', duration: 0 }
+                : { type: 'spring', damping: 22, stiffness: 220, mass: 0.8 }
+            }
+            // Fill and corners in `style`: NativeWind drops className on a
+            // Reanimated/Moti view, so the sheet rendered with no background.
+            style={{
+              backgroundColor: LightColors.surface,
+              paddingTop: 12,
+              borderTopLeftRadius: Radius.sheet,
+              borderTopRightRadius: Radius.sheet,
+              maxHeight: '92%',
+            }}
           >
             {/* Grabber — matches the photo/receipt proof sheets. Stays fixed
                 above the scroll area. */}
@@ -204,7 +218,10 @@ export function CompletionModal({
             >
             {/* Header */}
             <View className="flex-row items-center justify-between mb-4">
-              <Text className="text-lg font-montserrat-bold text-textPrimary">
+              <Text
+                className="text-lg font-montserrat-bold text-textPrimary"
+                accessibilityRole="header"
+              >
                 {title}
               </Text>
               <Pressable
@@ -213,9 +230,9 @@ export function CompletionModal({
                 hitSlop={8}
                 accessibilityRole="button"
                 accessibilityLabel="Close completion form"
-                className="w-9 h-9 rounded-full bg-surfaceMuted items-center justify-center"
+                className="w-11 h-11 rounded-full bg-surfaceMuted items-center justify-center"
               >
-                <X size={18} color={LightColors.textTertiary} />
+                <X size={20} color={LightColors.textSecondary} />
               </Pressable>
             </View>
 
@@ -227,8 +244,11 @@ export function CompletionModal({
                 accessible
                 accessibilityLabel={`Collect ${formatCurrency(collectAmount)} in cash from the customer`}
               >
-                <Banknote size={17} color={LightColors.accentDark} strokeWidth={2} />
-                <Text className="flex-1 ml-2.5 text-[13px] font-montserrat-bold text-textPrimary">
+                <Banknote size={20} color={LightColors.accentDark} strokeWidth={2} />
+                <Text
+                  className="flex-1 ml-2.5 text-[15px] font-montserrat-bold text-textPrimary"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   Collect {formatCurrency(collectAmount)} in cash
                 </Text>
               </View>
@@ -238,7 +258,7 @@ export function CompletionModal({
             {deliveryPhotoUrl && (
               <View className="mb-4">
                 <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
-                  {requiresSignature ? 'Delivery Photo' : 'Proof Photo'}
+                  {requiresSignature ? 'Delivery photo' : 'Proof photo'}
                 </Text>
                 <Image
                   source={mediaSource(deliveryPhotoUrl)}
@@ -299,11 +319,18 @@ export function CompletionModal({
                     />
                   </View>
                 ) : null}
-                <Text className="text-xs font-montserrat text-textTertiary mt-1.5 mb-3">
+                <Text className="text-xs font-montserrat text-textSecondary mt-1.5 mb-3">
                   Your delivery photo is the proof. The customer will see this reason.
                 </Text>
                 <Button
                   title="Complete without signature"
+                  disabledReason={
+                    reason == null
+                      ? 'Choose a reason to continue'
+                      : noteRequired && reasonNote.trim() === ''
+                        ? 'Say what happened to continue'
+                        : undefined
+                  }
                   loading={submitting}
                   loadingTitle="Completing…"
                   onPress={handleSubmitWithoutSignature}
@@ -336,14 +363,14 @@ export function CompletionModal({
                     strokes, exports a PNG on submit, and uploads it to
                     the bookings.signature_url column. */}
                 <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
-                  Customer Signature
+                  Customer signature
                 </Text>
                 <SignaturePad
                   ref={padRef}
                   height={padHeight}
                   onStroke={() => setSigned(true)}
                 />
-                <Text className="text-xs font-montserrat text-textTertiary mt-1.5 mb-3">
+                <Text className="text-xs font-montserrat text-textSecondary mt-1.5 mb-3">
                   Hand the phone to the customer to sign with their finger.
                 </Text>
 
@@ -353,21 +380,22 @@ export function CompletionModal({
                     accessibilityRole="button"
                     accessibilityLabel="Clear signature"
                     hitSlop={8}
-                    className="flex-row items-center justify-center gap-2 mb-4"
+                    className="flex-row items-center justify-center gap-2 py-3 mb-1"
                   >
-                    <Eraser size={14} color={LightColors.textTertiary} />
-                    <Text className="text-xs font-montserrat text-textSecondary">
-                      Clear Signature
+                    <Eraser size={16} color={LightColors.textSecondary} />
+                    <Text className="text-xs font-montserrat-semi text-textSecondary">
+                      Clear signature
                     </Text>
                   </Pressable>
                 )}
 
                 <Button
-                  title="Confirm & Complete"
+                  title="Confirm and complete"
                   loading={submitting}
                   loadingTitle="Completing…"
                   onPress={handleSubmit}
                   disabled={!signed || submitting}
+                  disabledReason={!signed ? 'Get the customer’s signature above to complete' : undefined}
                   fullWidth
                 />
                 {canSkipSignature ? (
@@ -401,7 +429,7 @@ export function CompletionModal({
                 </View>
 
                 <Button
-                  title="Confirm Completion"
+                  title="Confirm completion"
                   loading={submitting}
                   loadingTitle="Completing…"
                   onPress={handleSubmit}

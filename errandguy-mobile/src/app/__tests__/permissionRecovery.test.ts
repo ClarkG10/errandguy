@@ -40,8 +40,9 @@ describe('every permission-denied path offers a settings route', () => {
 
   it.each(cases)('$name offers it as a tappable action, not just prose', ({ file }) => {
     // A message mentioning Settings is not a recovery path; the toast needs an
-    // action the thumb can reach.
-    expect(read(file)).toMatch(/actionLabel:\s*'Settings'/);
+    // action the thumb can reach — or the shared permission sheet, whose
+    // "Allow in Settings" button is that action.
+    expect(read(file)).toMatch(/actionLabel:\s*'Settings'|<PermissionSheet\b|<PermissionPrompt\b/);
   });
 });
 

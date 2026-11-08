@@ -15,8 +15,8 @@ import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
 import { useAuthStore } from '../../../stores/authStore';
 import { useChatStore } from '../../../stores/chatStore';
-import { EmptyState } from '../../../components/ui/EmptyState';
-import { Illustration } from '../../../components/ui/Illustration';
+import { StatePanel } from '../../../components/customer/home/StatePanel';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
@@ -309,6 +309,8 @@ export default function ActivityScreen() {
           syncing={page1Q.isStale}
           updatedAt={page1Q.updatedAt}
           error={!!page1Q.error}
+          // Pattern 4: offline, the cached list stays and this says so.
+          offline={!!page1Q.servedFromCacheOffline}
           onRetry={page1Q.refresh}
           align="flex-end"
         />
@@ -393,6 +395,13 @@ export default function ActivityScreen() {
           vanishes. */}
       {loading && allBookings.length === 0 ? (
         <View className="flex-1 px-5 pt-3">
+          {/* Pattern 5: still loading after ~4s says why, with a retry —
+              above the cards, where the FAB can't cover it. */}
+          <SlowNetworkNotice
+            loading
+            onRetry={() => void page1Q.refresh()}
+            style={{ marginBottom: 12 }}
+          />
           <ActivityListSkeleton />
         </View>
       ) : (
@@ -408,12 +417,11 @@ export default function ActivityScreen() {
             />
           </View>
         )}
-        renderSectionHeader={({ section: { title, data } }) => (
-          <View className="flex-row items-center justify-between px-5 pt-3 pb-2 bg-background">
+        // Date headers only — the per-day count beside each was a badge
+        // nobody needed (rule 1); the rows themselves are the count.
+        renderSectionHeader={({ section: { title } }) => (
+          <View className="px-5 pt-3 pb-2 bg-background">
             <Eyebrow>{title}</Eyebrow>
-            <Text className="text-[10px] font-montserrat text-textTertiary">
-              {data.length}
-            </Text>
           </View>
         )}
         stickySectionHeadersEnabled
@@ -474,10 +482,10 @@ export default function ActivityScreen() {
           ) : trimmedSearch && statusFiltered.length > 0 ? (
             // Bookings exist, the search just matched none of them —
             // distinct from the genuine no-bookings empty state.
-            <EmptyState
-              illustration={<Illustration name="empty-search" size={168} />}
-              title="No matches"
-              description={`Nothing matches “${search.trim()}” in this view`}
+            <StatePanel
+              icon={SearchX}
+              title={`No errands match “${search.trim()}”`}
+              description="Try an errand type, like Delivery, or a booking number, like EG-20261107-000100."
               actionLabel="Clear search"
               onAction={() => setSearch('')}
             />
@@ -499,25 +507,31 @@ export default function ActivityScreen() {
             // Cancelled would read as a non-sequitur, so that tab describes
             // what lands here instead.
             filter === 'cancelled' ? (
-              <EmptyState
-                illustration={<Illustration name="empty-bookings" size={168} />}
+              <StatePanel
+                icon={ClipboardList}
                 title="No cancelled errands"
-                description="Errands you cancel will show up here"
+                description="Errands you or ErrandGuy cancel show up here, with what they cost."
+                actionLabel="See all errands"
+                onAction={() => setFilter('all')}
               />
             ) : filter === 'completed' ? (
-              <EmptyState
-                illustration={<Illustration name="empty-bookings" size={168} />}
+              <StatePanel
+                icon={ClipboardList}
                 title="No completed errands yet"
-                description="Errands you finish will show up here"
-                actionLabel="Book an Errand"
+                description="Finished errands land here with their receipt, photos and rating."
+                actionLabel="Book an errand"
                 onAction={() => router.push('/(customer)/book/type' as any)}
               />
             ) : (
-              <EmptyState
-                illustration={<Illustration name="empty-bookings" size={168} />}
-                title="No errands yet"
-                description="Book your first errand to get started"
-                actionLabel="Book an Errand"
+              <StatePanel
+                icon={ClipboardList}
+                title={filter === 'active' ? 'No errands running' : 'No errands yet'}
+                description={
+                  filter === 'active'
+                    ? 'Errands that are underway show up here so you can track them.'
+                    : 'Every errand you book shows up here, live while it runs and as a receipt after.'
+                }
+                actionLabel="Book an errand"
                 onAction={() => router.push('/(customer)/book/type' as any)}
               />
             )

@@ -14,7 +14,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { ChevronLeft } from 'lucide-react-native';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
-import { Illustration } from '../../components/ui/Illustration';
+import { emailProblem, asRule } from '../../components/auth/fieldRules';
 import { useResponsive } from '../../constants/responsive';
 import { authService } from '../../services/auth.service';
 import { toast } from '../../stores/toastStore';
@@ -44,11 +44,20 @@ export default function ForgotPasswordScreen() {
     control,
     handleSubmit,
     setError,
+    watch,
     formState: { errors },
   } = useForm<ForgotPasswordFormData>({
     mode: 'onTouched',
     defaultValues: { email: params.email ?? '' },
   });
+  // Pattern 9: the CTA waits for an email that passes the inline check.
+  const emailValue = watch('email');
+  const emailIssue = emailProblem(emailValue);
+  const ctaReason = emailIssue
+    ? (emailValue ?? '').trim()
+      ? emailIssue
+      : 'Enter the email on your account'
+    : undefined;
 
   const onSubmit = async (data: ForgotPasswordFormData) => {
     setLoading(true);
@@ -103,7 +112,7 @@ export default function ForgotPasswordScreen() {
           contentContainerStyle={{
             flexGrow: 1,
             paddingHorizontal: 24,
-            paddingTop: 16,
+            paddingTop: 24,
             width: '100%',
             maxWidth: contentMaxWidth,
             alignSelf: 'center',
@@ -111,11 +120,6 @@ export default function ForgotPasswordScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Illustration
-            name="auth-forgot"
-            size={148}
-            style={{ alignSelf: 'center', marginBottom: 8 }}
-          />
           <Text
             accessibilityRole="header"
             className="text-[28px] font-montserrat-bold text-ink"
@@ -130,13 +134,7 @@ export default function ForgotPasswordScreen() {
           <Controller
             control={control}
             name="email"
-            rules={{
-              required: 'Email is required',
-              pattern: {
-                value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                message: 'Enter a valid email',
-              },
-            }}
+            rules={{ validate: asRule(emailProblem) }}
             render={({ field: { onChange, onBlur, value } }) => (
               <Input
                 label="Email"
@@ -150,23 +148,26 @@ export default function ForgotPasswordScreen() {
                 textContentType="emailAddress"
                 autoFocus
                 returnKeyType="send"
-                onSubmitEditing={handleSubmit(onSubmit)}
+                onSubmitEditing={emailIssue ? undefined : handleSubmit(onSubmit)}
                 error={errors.email?.message}
+                valid={!emailIssue}
               />
             )}
           />
 
           <Button
-            title="Send Code"
+            title="Send code"
             fullWidth
             size="lg"
             loading={loading}
             loadingTitle="Sending code…"
+            disabled={!!emailIssue}
+            disabledReason={ctaReason}
             onPress={handleSubmit(onSubmit)}
           />
 
           <View className="flex-row items-center justify-center mt-6 py-2">
-            <Text className="text-[14px] font-montserrat text-textTertiary">
+            <Text className="text-[14px] font-montserrat text-textSecondary">
               Remember your password?{' '}
             </Text>
             <Pressable

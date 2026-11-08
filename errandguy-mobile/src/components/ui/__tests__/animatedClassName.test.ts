@@ -7,6 +7,10 @@ import * as path from 'path';
  * on the sign-in and reset-password screens stacked into a column, and bottom
  * sheets lost their position and background. Layout and colour on an
  * Animated.* element go in `style`.
+ *
+ * Moti's components are Reanimated components too: the runner offer card,
+ * the completion sheet and the photo picker sheet all rendered without their
+ * background because it was given as className on a MotiView.
  */
 const SRC = path.resolve(__dirname, '../../..');
 
@@ -19,12 +23,12 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe('Animated components', () => {
-  it('never take className (NativeWind drops it)', () => {
+  it('never take className (NativeWind drops it) — Animated.* and Moti*', () => {
     const offenders: string[] = [];
     for (const file of sourceFiles(SRC)) {
       const text = fs.readFileSync(file, 'utf8');
-      // The opening tag of each <Animated.X …>, up to its closing `>`.
-      const tags = text.match(/<Animated\.[A-Za-z]+\b[^>]*>/g) ?? [];
+      // The opening tag of each <Animated.X …> / <MotiView …>, up to its closing `>`.
+      const tags = text.match(/<(?:Animated\.[A-Za-z]+|Moti[A-Z][A-Za-z]*)\b[^>]*>/g) ?? [];
       for (const tag of tags) {
         if (/\sclassName=/.test(tag)) offenders.push(`${path.relative(SRC, file)}: ${tag.slice(0, 60)}`);
       }

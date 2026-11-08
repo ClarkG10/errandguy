@@ -1,6 +1,6 @@
 import React from 'react';
 import { render } from '@testing-library/react-native';
-import { PriceBreakdown } from '../PriceBreakdown';
+import { PriceBreakdown, sentenceCaseLabel } from '../PriceBreakdown';
 
 const items = [
   { label: 'Base Fee', amount: 50 },
@@ -9,11 +9,27 @@ const items = [
 ];
 
 describe('PriceBreakdown', () => {
-  it('renders all price items', () => {
+  it('renders all price items, labels in sentence case', () => {
     const { getByText } = render(<PriceBreakdown items={items} total={92} />);
-    expect(getByText('Base Fee')).toBeTruthy();
-    expect(getByText('Distance Fee')).toBeTruthy();
-    expect(getByText('Convenience Fee')).toBeTruthy();
+    expect(getByText('Base fee')).toBeTruthy();
+    expect(getByText('Distance fee')).toBeTruthy();
+    expect(getByText('Convenience fee')).toBeTruthy();
+  });
+
+  it('hides a zero-value row (no "Surcharge ₱0.00") unless asked to show it', () => {
+    const withZero = [...items, { label: 'Surcharge', amount: 0 }];
+    const hidden = render(<PriceBreakdown items={withZero} total={92} />);
+    expect(hidden.queryByText('Surcharge')).toBeNull();
+    hidden.unmount();
+    const shown = render(<PriceBreakdown items={withZero} total={92} showZeroRows />);
+    expect(shown.getByText('Surcharge')).toBeTruthy();
+  });
+
+  it('keeps the case of proper nouns and acronyms', () => {
+    expect(sentenceCaseLabel('GCash Fee')).toBe('GCash fee');
+    expect(sentenceCaseLabel('Promo Discount')).toBe('Promo discount');
+    expect(sentenceCaseLabel('VAT On Fees')).toBe('VAT on fees');
+    expect(sentenceCaseLabel('ErrandGuy Wallet Credit')).toBe('ErrandGuy wallet credit');
   });
 
   it('renders total correctly', () => {
@@ -43,7 +59,7 @@ describe('PriceBreakdown', () => {
       { label: 'Promo Discount', amount: -20 },
     ];
     const { getByText } = render(<PriceBreakdown items={discountItems} total={80} />);
-    expect(getByText('Promo Discount')).toBeTruthy();
+    expect(getByText('Promo discount')).toBeTruthy();
     expect(getByText('₱80.00')).toBeTruthy();
   });
 

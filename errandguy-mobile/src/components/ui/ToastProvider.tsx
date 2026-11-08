@@ -15,10 +15,11 @@ import {
   AlertCircle,
   Info,
   AlertTriangle,
-  Package,
 } from 'lucide-react-native';
 import { useToastStore, type ToastVariant } from '../../stores/toastStore';
 import { LightColors } from '../../constants/colors';
+import { Radius } from '../../constants/radius';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 
 const INVERSE = LightColors.textInverse;
 
@@ -38,7 +39,7 @@ const VARIANT_CONFIG: Record<
   // rungs keep the same hue language and clear 4.5:1 with white.
   success: { bg: LightColors.successDark, icon: CheckCircle, iconColor: INVERSE, textColor: INVERSE },
   error: { bg: LightColors.dangerDark, icon: AlertCircle, iconColor: INVERSE, textColor: INVERSE },
-  info: { bg: LightColors.primary, icon: Package, iconColor: INVERSE, textColor: INVERSE },
+  info: { bg: LightColors.primary, icon: Info, iconColor: INVERSE, textColor: INVERSE },
   warning: { bg: LightColors.warningDark, icon: AlertTriangle, iconColor: INVERSE, textColor: INVERSE },
 };
 
@@ -85,7 +86,11 @@ function ToastCard({
   onAction?: () => void;
 }) {
   const { dismiss } = useToastStore();
-  const translateY = useSharedValue(-80);
+  const reduceMotion = useReducedMotion();
+  // Read inside the mount effect / callbacks without re-running them.
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
+  const translateY = useSharedValue(-24);
   const opacity = useSharedValue(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -95,16 +100,25 @@ function ToastCard({
   const handleDismiss = useCallback(() => dismiss(id), [dismiss, id]);
 
   const animateOut = useCallback(() => {
-    translateY.value = withTiming(-80, { duration: 350, easing: Easing.inOut(Easing.ease) });
-    opacity.value = withTiming(0, { duration: 350, easing: Easing.inOut(Easing.ease) }, () => {
+    // Rule 20: short and subtle; a plain fade under Reduce Motion.
+    const duration = reduceMotionRef.current ? 120 : 200;
+    if (!reduceMotionRef.current) {
+      translateY.value = withTiming(-24, { duration, easing: Easing.in(Easing.cubic) });
+    }
+    opacity.value = withTiming(0, { duration, easing: Easing.inOut(Easing.ease) }, () => {
       runOnJS(handleDismiss)();
     });
   }, [translateY, opacity, handleDismiss]);
 
   useEffect(() => {
-    // Animate in with spring for smooth entrance
-    translateY.value = withSpring(0, { damping: 20, stiffness: 300, mass: 0.8 });
-    opacity.value = withTiming(1, { duration: 300 });
+    // Settle in from just above — no slide under Reduce Motion.
+    if (reduceMotionRef.current) {
+      translateY.value = 0;
+      opacity.value = withTiming(1, { duration: 120 });
+    } else {
+      translateY.value = withSpring(0, { damping: 22, stiffness: 320, mass: 0.7 });
+      opacity.value = withTiming(1, { duration: 200 });
+    }
 
     // Toast is the app's primary transient feedback and it auto-dismisses,
     // so a screen-reader user who heard nothing had no way to recover the
@@ -160,7 +174,7 @@ function ToastCard({
       // 'polite' queues everything else behind whatever is being read.
       accessibilityLiveRegion={variant === 'error' ? 'assertive' : 'polite'}
     >
-      <Icon size={20} color={config.iconColor} />
+      <Icon size={20} color={config.iconColor} style={styles.icon} />
       <Text
         style={[styles.message, { color: config.textColor }]}
         numberOfLines={TOAST_MAX_LINES}
@@ -186,9 +200,10 @@ function ToastCard({
       ) : null}
       <Pressable
         onPress={handleManualDismiss}
-        hitSlop={12}
+        hitSlop={14}
         accessibilityRole="button"
         accessibilityLabel="Dismiss"
+        style={styles.icon}
       >
         <X size={16} color={config.iconColor} />
       </Pressable>
@@ -227,11 +242,13 @@ const styles = StyleSheet.create({
   },
   card: {
     flexDirection: 'row',
-    alignItems: 'center',
+    // Top-aligned so a 3–5 line receipt keeps its icon by the first line.
+    alignItems: 'flex-start',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    // Full pill — floats like a capsule notification.
-    borderRadius: 999,
+    // A rounded card, not a 999 pill: multi-line toasts (money receipts, the
+    // location prompt) looked like a squashed lozenge as a capsule.
+    borderRadius: Radius.card,
     gap: 10,
     // Soft diffuse lift (Elevation.md language).
     shadowColor: LightColors.textPrimary,
@@ -242,10 +259,13 @@ const styles = StyleSheet.create({
   },
   message: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 13.5,
     fontFamily: 'Quicksand_500Medium',
-    lineHeight: 18,
+    lineHeight: 19,
+    fontVariant: ['tabular-nums'],
   },
+  // Optically centre a 20pt glyph on the first 19pt line.
+  icon: { marginTop: 0 },
   // Right-aligned inline action ("Undo", "View"). minHeight 44 with a
   // negative vertical margin keeps a full-size touch target without
   // fattening the pill visually.

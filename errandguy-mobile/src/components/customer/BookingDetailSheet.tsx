@@ -22,11 +22,12 @@ import { itemsCashDue, itemsCashReadyLine } from '../../utils/shoppingMoney';
 import { getErrandTypeRule } from '../../constants/errandTypeRules';
 import { formatFullDate, formatTime } from '../../utils/formatDate';
 import {
-  statusLabel as statusLabelFor,
+  bookingStatusLabel,
   STATUS_COLORS,
   STATUS_TEXT_COLORS,
   TRACKABLE_STATUSES,
 } from '../../constants/statusLabels';
+import { isAwaitingPayment } from '../../utils/bookingPayment';
 import type { Booking } from '../../types';
 import { LightColors } from '../../constants/colors';
 
@@ -162,10 +163,14 @@ export function BookingDetailSheet({
   // reserved for the pill wash (see statusLabels.ts convention).
   const statusTextColor =
     STATUS_TEXT_COLORS[booking.status] ?? LightColors.textSecondary;
-  // Type-aware so the sheet's eyebrow agrees with the Activity row it was
-  // opened from and with the tracking hero (a queue errand reads "At the
-  // front", never "Picked up").
-  const statusLabel = statusLabelFor(booking.status, booking.errand_type?.slug);
+  // Type- AND booking-aware, so the sheet agrees with the row it was opened
+  // from, the home card and the tracking hero: a queue errand reads "At the
+  // front", never "Picked up"; an unpaid GCash/Maya errand "Waiting for
+  // payment" and one booked for later "Scheduled", never "Finding a runner".
+  const statusLabel = bookingStatusLabel(booking);
+  // The errand is waiting on the customer's payment, which lives on the
+  // errand screen — so the button says that's where it goes.
+  const awaitingPayment = isAwaitingPayment(booking);
 
   const priceItems = fareLines(booking, booking.promo_discount);
 
@@ -411,8 +416,12 @@ export function BookingDetailSheet({
         <View className="gap-2.5">
           {isLive ? (
             <Button
-              title="Track this errand"
-              icon={NavIcon}
+              title={
+                awaitingPayment
+                  ? `Open to pay ${formatCurrency(booking.total_amount)}`
+                  : 'Track this errand'
+              }
+              icon={awaitingPayment ? undefined : NavIcon}
               onPress={handleTrack}
               fullWidth
             />

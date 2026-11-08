@@ -82,7 +82,7 @@ export function DocumentUploadCard({
 }: DocumentUploadCardProps) {
   const config = status ? STATUS_CONFIG[status] : null;
   const StatusIcon = config?.icon ?? ChevronRight;
-  const glyphColor = config?.glyph ?? LightColors.textMuted;
+  const glyphColor = config?.glyph ?? LightColors.textSecondary;
   const isUploading = uploadProgress != null;
   const Icon = icon ?? FileText;
   const showRejection = status === 'rejected' && !!rejectionReason;
@@ -109,13 +109,15 @@ export function DocumentUploadCard({
           </View>
           <Text
             className="text-xs font-montserrat-semi mt-0.5"
-            style={{ color: config ? config.text : LightColors.textTertiary }}
+            style={{ color: config ? config.text : LightColors.textSecondary }}
           >
             {config ? config.label : description ?? 'Not uploaded'}
           </Text>
         </View>
 
-        {!isUploading && <StatusIcon size={16} color={glyphColor} />}
+        {/* Only a real status gets a glyph — a chevron on a card that isn't
+            itself tappable promised a destination that wasn't there. */}
+        {!isUploading && config ? <StatusIcon size={16} color={glyphColor} /> : null}
       </View>
 
       {/* Rejection reason — AlertCircle + dangerDark so the runner can fix
@@ -139,7 +141,7 @@ export function DocumentUploadCard({
       {/* Capture tip — only before an upload succeeds and when there's no
           rejection reason already occupying that slot. */}
       {tip && !showRejection && (!config || status === 'rejected') && (
-        <Text className="text-xs font-montserrat text-textTertiary mt-2">
+        <Text className="text-xs font-montserrat text-textSecondary mt-2">
           {tip}
         </Text>
       )}
@@ -167,7 +169,7 @@ export function DocumentUploadCard({
             cachePolicy="memory-disk"
             transition={150}
           />
-          <Text className="text-xs font-montserrat text-textTertiary mt-1.5">
+          <Text className="text-xs font-montserrat text-textSecondary mt-1.5">
             Tap to view full size
           </Text>
         </Pressable>
@@ -186,15 +188,14 @@ export function DocumentUploadCard({
           accessibilityLabel={`${
             !fileUrl ? 'Upload' : status === 'rejected' ? 'Re-upload' : 'Replace'
           } ${label}`}
-          // The dashed row is only ~32pt tall — hitSlop tops it up to the
-          // 44pt effective touch-target minimum without changing the look.
-          hitSlop={{ top: 8, bottom: 8 }}
           android_ripple={{ color: LightColors.primary + '22', borderless: false }}
-          style={({ pressed }) => [pressed && { opacity: 0.85 }]}
+          // 44pt on its own; press state in className (a function `style`
+          // on a Pressable drops its layout under NativeWind).
+          style={{ minHeight: 44 }}
           className="flex-row items-center justify-center gap-2 py-2 mt-3 rounded-lg border border-dashed border-primary bg-primaryLight active:bg-primary/10"
         >
-          <Upload size={14} color={LightColors.primary} />
-          <Text className="text-xs font-montserrat-bold text-primary">
+          <Upload size={16} color={LightColors.primary} />
+          <Text className="text-[13px] font-montserrat-bold text-primary">
             {!fileUrl ? 'Upload' : status === 'rejected' ? 'Re-upload' : 'Replace'}
           </Text>
         </Pressable>

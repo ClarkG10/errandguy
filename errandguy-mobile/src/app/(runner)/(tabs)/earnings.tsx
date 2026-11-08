@@ -8,13 +8,13 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
-import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { Eyebrow, Hairline } from '../../../components/ui/Typography';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { EarningsBreakdown } from '../../../components/runner/EarningsBreakdown';
 import { settledIn, splitEarnings } from '../../../components/runner/errandEarnings';
 import {
@@ -476,9 +476,9 @@ export default function EarningsScreen() {
   }, [exporting, period]);
 
   const periodLabel: Record<Period, string> = {
-    today: "Today's Earnings",
-    week: "This Week's Earnings",
-    month: "This Month's Earnings",
+    today: "Today's earnings",
+    week: "This week's earnings",
+    month: "This month's earnings",
   };
 
   if (initialLoading) {
@@ -486,6 +486,13 @@ export default function EarningsScreen() {
       <View className="flex-1 bg-background">
         <GradientHeader title="Earnings" />
         <EarningsSkeleton />
+        {/* Pattern 5 — past ~4s, name the connection and offer a retry. */}
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', left: 20, right: 20, bottom: TAB_CONTENT_BOTTOM_INSET_RUNNER }}
+        >
+          <SlowNetworkNotice loading={initialLoading} onRetry={retryAll} />
+        </View>
       </View>
     );
   }
@@ -565,38 +572,17 @@ export default function EarningsScreen() {
                   ...Elevation.md,
                 }}
               >
-                {/* Warm brand-gold glow behind the coins — a low-alpha accent
-                    wash that hints at "earnings" without lifting the local
-                    background under any numerals. Purely decorative and kept
-                    to the top-right corner; the white balance stays loudest. */}
-                <View
-                  pointerEvents="none"
-                  style={{
-                    position: 'absolute',
-                    top: -18,
-                    right: -14,
-                    width: 108,
-                    height: 108,
-                    borderRadius: 54,
-                    backgroundColor: LightColors.accent,
-                    opacity: 0.16,
-                  }}
-                />
-                {/* Subtle 3D coins accent — decorative only, tucked into the
-                    top-right corner behind the left-aligned numerals so it
-                    never competes with or crowds the total-earnings figure. */}
-                <Illustration
-                  name="3d-coins"
-                  size={64}
-                  style={{ position: 'absolute', top: 10, right: 14, opacity: 0.9 }}
-                />
                 <Text
                   className="text-xs font-montserrat-semi text-white/90 uppercase"
                   style={{ letterSpacing: 1.2 }}
                 >
                   {periodLabel[period]}
                 </Text>
-                <Text className="text-4xl font-inter-semi tabular-nums text-white mt-1">
+                <Text
+                  className="text-4xl font-inter-semi tabular-nums text-white mt-1"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                  accessibilityRole="header"
+                >
                   {formatCurrency(earningsData?.total_earnings ?? 0)}
                 </Text>
                 {/* Secondary stats — inline white text on the raw gradient
@@ -607,7 +593,7 @@ export default function EarningsScreen() {
                     the runner is told about each tip by push, so a headline that
                     excluded them read as money going missing. */}
                 {Number(earningsData?.total_tips ?? 0) > 0 && (
-                  <Text className="text-[13px] font-montserrat text-white/85 mt-1">
+                  <Text className="text-[13px] font-montserrat text-white/90 mt-1">
                     plus{' '}
                     <Text className="font-inter-semi tabular-nums text-white">
                       {formatCurrency(Number(earningsData?.total_tips ?? 0))}
@@ -621,7 +607,7 @@ export default function EarningsScreen() {
                     then draw from). Shown only when the rows reconcile to the
                     total above. */}
                 {earningsSplit && earningsSplit.cash > 0 ? (
-                  <Text className="text-[12px] font-montserrat text-white/85 mt-1">
+                  <Text className="text-[12px] font-montserrat text-white/90 mt-1">
                     <Text className="font-inter-semi tabular-nums text-white">
                       {formatCurrency(earningsSplit.cash)}
                     </Text>{' '}
@@ -636,11 +622,11 @@ export default function EarningsScreen() {
                   <Text className="text-[13px] font-inter-semi tabular-nums text-white">
                     {earningsData?.total_errands ?? 0}
                   </Text>
-                  <Text className="text-[13px] font-montserrat text-white/85 ml-1">
+                  <Text className="text-[13px] font-montserrat text-white/90 ml-1">
                     errands
                   </Text>
                   <Text className="text-[13px] font-montserrat text-white/50 mx-2">·</Text>
-                  <Text className="text-[13px] font-montserrat text-white/85">Avg</Text>
+                  <Text className="text-[13px] font-montserrat text-white/90">Avg</Text>
                   <Text className="text-[13px] font-inter-semi tabular-nums text-white ml-1">
                     {formatCurrency(earningsData?.avg_per_errand ?? 0)}
                   </Text>
@@ -690,6 +676,9 @@ export default function EarningsScreen() {
                 }
                 onRetry={onRefresh ?? summaryQ.refresh}
                 align="flex-start"
+                // The pill pads itself 10pt; pull it back so its text sits on
+                // the column's left edge with the tabs above.
+                style={{ marginLeft: -10 }}
               />
             </View>
 
@@ -801,7 +790,7 @@ export default function EarningsScreen() {
                       {balance < 0 ? '−' : ''}
                       {formatCurrency(Math.abs(balance))}
                     </Text>
-                    <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">
+                    <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5">
                       {balance < 0
                         ? 'Cleared automatically from your next prepaid earnings'
                         : balance < minPayout
@@ -824,12 +813,12 @@ export default function EarningsScreen() {
                     </Text>
                     <View className="flex-row items-center mt-0.5">
                       {pendingPayout && (
-                        <Clock size={11} color={LightColors.warningDark} style={{ marginRight: 3 }} />
+                        <Clock size={12} color={LightColors.warningDark} style={{ marginRight: 4 }} />
                       )}
                       <Text
-                        className="text-[11px] font-montserrat flex-1"
+                        className="text-[12px] font-montserrat flex-1"
                         style={{
-                          color: pendingPayout ? LightColors.warningDark : LightColors.textTertiary,
+                          color: pendingPayout ? LightColors.warningDark : LightColors.textSecondary,
                         }}
                         numberOfLines={2}
                       >
@@ -844,8 +833,9 @@ export default function EarningsScreen() {
             {/* Payout Button */}
             <View className="px-5 mb-4">
               <Button
-                title={pendingPayout ? 'View payout status' : 'Request Payout'}
+                title={pendingPayout ? 'View payout status' : 'Request payout'}
                 variant="primary"
+                size="lg"
                 onPress={() => {
                   // The payout list is warmed at boot; the wallet-activity preview
                   // beneath it was not, so a MONEY screen half-painted. Page size
@@ -898,12 +888,15 @@ export default function EarningsScreen() {
         }
         renderSectionHeader={({ section }) => (
           <View className="flex-row items-center justify-between mb-1.5 px-5">
-            <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.2 }}>
+            <Text className="text-[11px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.2 }}>
               {section.label}
             </Text>
             {/* The whole day's payout, from the server — not just the rows
                 loaded so far. */}
-            <Text className="text-[11px] font-inter-semi tabular-nums text-textSecondary">
+            <Text
+              className="text-[12px] font-inter-semi tabular-nums text-textSecondary"
+              style={{ fontVariant: ['tabular-nums'] }}
+            >
               {formatCurrency(section.total)}
             </Text>
           </View>
@@ -930,14 +923,14 @@ export default function EarningsScreen() {
                 }
                 // Layout stays in className — a Pressable styled only
                 // through style={() => [obj]} loses flexDirection.
-                className="flex-row items-center justify-between py-3"
-                style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
+                className="flex-row items-center justify-between py-3 active:opacity-60"
+                style={{ minHeight: 52 }}
               >
                 <View className="flex-1 mr-2">
                   <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={1}>
                     {errand.errand_type?.name ?? 'Errand'}
                   </Text>
-                  <Text className="text-[11px] font-inter tabular-nums text-textTertiary mt-0.5">
+                  <Text className="text-[12px] font-inter tabular-nums text-textSecondary mt-0.5">
                     {/* formatTime, not toLocaleTimeString — see
                         navigate/[id].tsx fmtArrival. A runner's own
                         earnings rows read 24h on a 24h-locale device
@@ -948,13 +941,16 @@ export default function EarningsScreen() {
                     {howLabel ? ` · ${howLabel}` : ''}
                   </Text>
                 </View>
-                <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
+                <Text
+                  className="text-[15px] font-inter-semi tabular-nums text-textPrimary"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   {formatRunnerPayout(errand.runner_payout)}
                 </Text>
                 {expanded ? (
-                  <ChevronUp size={16} color={LightColors.textTertiary} style={{ marginLeft: 6 }} />
+                  <ChevronUp size={16} color={LightColors.textSecondary} style={{ marginLeft: 6 }} />
                 ) : (
-                  <ChevronDown size={16} color={LightColors.textMuted} style={{ marginLeft: 6 }} />
+                  <ChevronDown size={16} color={LightColors.textSecondary} style={{ marginLeft: 6 }} />
                 )}
               </Pressable>
               {expanded && <EarningsBreakdown booking={errand} />}
@@ -976,9 +972,14 @@ export default function EarningsScreen() {
               />
             ) : (
               <RunnerEmptyState
-                eyebrow="This period"
-                title="No earnings yet"
-                description="Completed errands for this period will show up here."
+                title={
+                  period === 'today'
+                    ? 'No earnings yet today'
+                    : period === 'week'
+                      ? 'No earnings yet this week'
+                      : 'No earnings yet this month'
+                }
+                description="Errands you complete show up here with what each one paid."
                 actionLabel="Go online to start earning"
                 onAction={() => router.push('/(runner)/(tabs)' as any)}
               />
@@ -989,8 +990,8 @@ export default function EarningsScreen() {
           <>
             {loadingMore ? (
               <View className="py-4 items-center justify-center">
-                <Text className="text-[11px] font-montserrat text-textTertiary">
-                  Loading…
+                <Text className="text-[12px] font-montserrat text-textSecondary">
+                  Loading more errands…
                 </Text>
               </View>
             ) : loadMoreFailed && earningsList.length > 0 ? (
@@ -1006,8 +1007,8 @@ export default function EarningsScreen() {
                 className="mx-5 my-2 py-3 rounded-2xl border border-divider bg-surface flex-row items-center justify-center"
                 style={{ minHeight: 44 }}
               >
-                <RefreshCw size={14} color={LightColors.primary} strokeWidth={2} />
-                <Text className="text-[12px] font-montserrat-bold text-primary ml-2">
+                <RefreshCw size={16} color={LightColors.primary} strokeWidth={2} />
+                <Text className="text-[13px] font-montserrat-bold text-primary ml-2">
                   Couldn’t load more · Try again
                 </Text>
               </Pressable>

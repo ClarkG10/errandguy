@@ -11,6 +11,7 @@ import {
   Keyboard,
   Platform,
   BackHandler,
+  AppState,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -33,6 +34,7 @@ import {
   BookUser,
   History,
   StickyNote,
+  AlertCircle,
 } from 'lucide-react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomSheet } from '../../../components/ui/BottomSheet';
@@ -84,6 +86,8 @@ import {
   recentInstructionSuggestions,
 } from '../../../utils/bookingRecall';
 import { formatShortDate } from '../../../utils/formatDate';
+import { isPhMobile } from '../../../utils/phone';
+import { LocationPermissionSheet } from '../../../components/customer/booking/LocationPermissionSheet';
 
 const DEFAULT_CENTER: [number, number] = [121.0, 14.6];
 
@@ -100,6 +104,9 @@ const INSTRUCTION_TEMPLATES = [
   'Leave with guard',
 ];
 // Step labels live in `BookingStepIndicator`; keep this file lean.
+
+/** How to fix a contact number the server won't take (PH mobiles only). */
+const CONTACT_PHONE_HINT = 'Enter a PH mobile number, like 0917 123 4567';
 
 // expo-contacts needs a native build and is absent in Expo Go — the same
 // guarded require the trusted-contacts screen uses. When it's null the
@@ -431,6 +438,11 @@ export default function TaskDetailsScreen() {
   const mapOpen = true;
   const [currentAddress, setCurrentAddress] = useState('');
   const [isMoving, setIsMoving] = useState(false);
+  // The customer refused location (or it's off for the app): a sheet
+  // explains, links to Settings, and offers typing the address instead of a
+  // generic "couldn't get your location" toast.
+  const [locationBlocked, setLocationBlocked] = useState(false);
+  const searchInputRef = useRef<TextInput>(null);
   const [currentCoord, setCurrentCoord] = useState<[number, number] | null>(null);
   const [showSavedSheet, setShowSavedSheet] = useState(false);
   const [photoPickerVisible, setPhotoPickerVisible] = useState(false);
@@ -936,14 +948,27 @@ export default function TaskDetailsScreen() {
   const handleMyLocation = useCallback(async () => {
     try {
       setIsMoving(true);
-      // getCurrentCoords handles permission + a timeout + last-known fallback,
-      // so this never hangs forever on weak GPS or a simulator with no fix.
+      // Permission first, handled here rather than inside getCurrentCoords:
+      // a refusal gets the inline explanation (Settings + type the address)
+      // instead of a blocking alert followed by a generic error toast.
+      let perm = await Location.getForegroundPermissionsAsync();
+      if (perm.status !== 'granted' && perm.canAskAgain) {
+        perm = await Location.requestForegroundPermissionsAsync();
+      }
+      if (perm.status !== 'granted') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        setLocationBlocked(true);
+        return;
+      }
+      setLocationBlocked(false);
+      // getCurrentCoords adds a timeout + last-known fallback, so this never
+      // hangs forever on weak GPS or a simulator with no fix.
       const pos = await getCurrentCoords({
-        feature: 'set your pickup point',
+        requirePermission: false,
         accuracy: Location.Accuracy.High,
       });
       if (!pos) {
-        toast.error('Could not get your location. Try searching instead.');
+        toast.error("Couldn't find where you are right now. Search for the address instead.");
         return;
       }
       const coords: [number, number] = [pos.lng, pos.lat];
@@ -957,11 +982,42 @@ export default function TaskDetailsScreen() {
       setCurrentAddress(addr);
     } catch (err) {
       console.error('[details] handleMyLocation error:', err);
-      toast.error('Could not get your location.');
+      toast.error("Couldn't find where you are right now. Search for the address instead.");
     } finally {
       setIsMoving(false);
     }
   }, [reverseGeocode]);
+
+  // Back from the phone's Settings with location now allowed: drop the notice
+  // and finish what the customer asked for — find them on the map.
+  useEffect(() => {
+    if (!locationBlocked) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      Location.getForegroundPermissionsAsync()
+        .then((perm) => {
+          if (perm.status === 'granted') {
+            setLocationBlocked(false);
+            void handleMyLocation();
+          }
+        })
+        .catch(() => {});
+    });
+    return () => sub.remove();
+  }, [locationBlocked, handleMyLocation]);
+
+  // Typing an address is the alternative the notice offers — once they're
+  // doing it, the notice has done its job.
+  useEffect(() => {
+    if (searchQuery.trim()) setLocationBlocked(false);
+  }, [searchQuery]);
+
+  const typeAddressInstead = useCallback(() => {
+    setLocationBlocked(false);
+    setShowSearch(true);
+    // After the sheet's close animation, or the focus is lost with it.
+    setTimeout(() => searchInputRef.current?.focus(), 300);
+  }, []);
 
   /* ── Saved address ──
      A saved address already carries validated coordinates the user chose
@@ -1443,9 +1499,11 @@ export default function TaskDetailsScreen() {
   /* ── Continue ── */
   const handleContinue = useCallback(() => {
     const newErrors: Record<string, string> = {};
-    if (!draftBooking.pickup_address) newErrors.pickup = 'Pickup location is required';
+    if (!draftBooking.pickup_address) {
+      newErrors.pickup = `Add the ${rule.pickupLabel.toLowerCase()} — tap Change to set it on the map`;
+    }
     if (!rule.singleLocation && !draftBooking.dropoff_address) {
-      newErrors.dropoff = 'Dropoff location is required';
+      newErrors.dropoff = `Add the ${rule.dropoffLabel.toLowerCase()} — tap Change to set it on the map`;
     }
     if (rule.requiresShoppingBudget) {
       // Shopping types use the checklist in place of the free-text
@@ -1458,15 +1516,42 @@ export default function TaskDetailsScreen() {
     } else if (rule.descriptionRequired && !draftBooking.description?.trim()) {
       newErrors.description = `${rule.descriptionLabel} is required`;
     }
+    // Contact numbers: the server takes only a PH mobile number and would
+    // refuse the whole booking at Confirm, two screens later, with the field
+    // out of sight. Same rule as the server (utils/phone), flagged here on
+    // the field itself.
+    if (
+      rule.showPickupContact &&
+      draftBooking.pickup_contact_phone?.trim() &&
+      !isPhMobile(draftBooking.pickup_contact_phone)
+    ) {
+      newErrors.pickup_contact_phone = CONTACT_PHONE_HINT;
+    }
+    if (
+      rule.showDropoffContact &&
+      draftBooking.dropoff_contact_phone?.trim() &&
+      !isPhMobile(draftBooking.dropoff_contact_phone)
+    ) {
+      newErrors.dropoff_contact_phone = CONTACT_PHONE_HINT;
+    }
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       // Bring the first offending section into view — on a form this long
       // it's usually scrolled off-screen when Continue is tapped.
-      // (pickup/dropoff errors render in the always-visible footer.)
-      const firstKey = (['shoppingItems', 'description', 'shopping_budget'] as const).find(
-        (k) => newErrors[k],
-      );
+      // (pickup/dropoff errors render on their route rows, which never
+      // scroll away.) A contact number with a problem opens its section.
+      if (newErrors.pickup_contact_phone) setShowPickupContact(true);
+      if (newErrors.dropoff_contact_phone) setShowDropoffContact(true);
+      const firstKey = (
+        [
+          'shoppingItems',
+          'description',
+          'shopping_budget',
+          'pickup_contact_phone',
+          'dropoff_contact_phone',
+        ] as const
+      ).find((k) => newErrors[k]);
       if (firstKey) {
         const y = sectionY.current[firstKey];
         if (y != null) {
@@ -1474,6 +1559,13 @@ export default function TaskDetailsScreen() {
         }
         if (firstKey === 'description') descriptionRef.current?.focus();
         if (firstKey === 'shopping_budget') budgetRef.current?.focus();
+        // The section may only now be expanding — focus after it renders.
+        if (firstKey === 'pickup_contact_phone') {
+          setTimeout(() => pickupPhoneRef.current?.focus(), 50);
+        }
+        if (firstKey === 'dropoff_contact_phone') {
+          setTimeout(() => dropoffPhoneRef.current?.focus(), 50);
+        }
       }
       return;
     }
@@ -1588,6 +1680,12 @@ export default function TaskDetailsScreen() {
               ...(cleanPhone ? { dropoff_contact_phone: cleanPhone } : {}),
             },
       );
+      // A number filled from Me / recents / Contacts replaces the one that
+      // was flagged, so its flag goes too.
+      if (cleanPhone) {
+        const key = target === 'pickup' ? 'pickup_contact_phone' : 'dropoff_contact_phone';
+        setErrors((e) => (e[key] ? { ...e, [key]: '' } : e));
+      }
       Haptics.selectionAsync().catch(() => {});
     },
     [updateDraft],
@@ -1810,8 +1908,8 @@ export default function TaskDetailsScreen() {
             <View style={{ width: '100%', maxWidth: contentMaxWidth + 32, alignSelf: 'center' }}>
               <View style={st.stepIndicatorBackdrop}>
                 {/* Pickup/dropoff/details are all sub-phases of step 2 — the
-                    indicator must never regress below where the user came from. */}
-                <Text style={st.stepEyebrow}>New errand · Step 2</Text>
+                    indicator must never regress below where the user came from.
+                    No "Step 2" eyebrow: the indicator already says so. */}
                 <BookingStepIndicator currentStep={1} />
               </View>
             </View>
@@ -1823,6 +1921,7 @@ export default function TaskDetailsScreen() {
               <View style={st.searchBar}>
                 <Search size={18} color={LightColors.textMuted} />
                 <TextInput
+                  ref={searchInputRef}
                   style={st.searchInput}
                   placeholder={
                     phase === 'pickup'
@@ -2023,8 +2122,8 @@ export default function TaskDetailsScreen() {
               <Button
                 title={
                   phase === 'pickup'
-                    ? rule.pickupStepCopy?.confirm ?? `Confirm ${rule.pickupLabel}`
-                    : rule.dropoffStepCopy?.confirm ?? `Confirm ${rule.dropoffLabel}`
+                    ? rule.pickupStepCopy?.confirm ?? `Confirm ${rule.pickupLabel.toLowerCase()}`
+                    : rule.dropoffStepCopy?.confirm ?? `Confirm ${rule.dropoffLabel.toLowerCase()}`
                 }
                 onPress={handleConfirmLocation}
                 disabled={!currentAddress || isMoving}
@@ -2062,9 +2161,6 @@ export default function TaskDetailsScreen() {
                     <Skeleton width={168} height={13} borderRadius={7} />
                   </View>
                 ) : null}
-                {(errors.pickup || errors.dropoff) && (
-                  <Text style={st.errorText}>{errors.pickup || errors.dropoff}</Text>
-                )}
                 <Button title="Continue" onPress={handleContinue} fullWidth />
               </View>
             )}
@@ -2186,6 +2282,7 @@ export default function TaskDetailsScreen() {
             </Pressable>
           </View>
 
+
           {/* Confirm CTA lives in the sheet `footer` so it stays visible. */}
         </View>
       ) : (
@@ -2208,7 +2305,6 @@ export default function TaskDetailsScreen() {
           {/* In-sheet step indicator — the floating copy over the map is
               hidden this phase because the full-height sheet covers it. */}
           <View style={st.sheetStepHeader}>
-            <Text style={st.stepEyebrow}>New errand · Step 2</Text>
             <BookingStepIndicator currentStep={1} />
           </View>
 
@@ -2221,11 +2317,23 @@ export default function TaskDetailsScreen() {
               accessibilityLabel={`Change ${rule.pickupLabel}: ${draftBooking.pickup_address ?? ''}`}
             >
               <View style={[st.routeDot, { backgroundColor: LightColors.primary }]} />
-              <Text style={st.routeAddr} numberOfLines={1}>
-                {draftBooking.pickup_address}
+              <Text
+                style={[st.routeAddr, !draftBooking.pickup_address && st.routeAddrEmpty]}
+                numberOfLines={1}
+              >
+                {draftBooking.pickup_address || `Add ${rule.pickupLabel.toLowerCase()}`}
               </Text>
               <Text style={st.changeLink}>Change</Text>
             </Pressable>
+            {/* Flagged on the row itself — the fix is one tap away. */}
+            {!!errors.pickup && (
+              <View style={st.routeError}>
+                <AlertCircle size={13} color={LightColors.dangerDark} strokeWidth={2.2} />
+                <Text style={st.routeFieldErrorText} accessibilityLiveRegion="polite" accessibilityRole="alert">
+                  {errors.pickup}
+                </Text>
+              </View>
+            )}
             {!rule.singleLocation && (
               <>
                 {/* Dashed connector between the pickup/dropoff beads —
@@ -2242,11 +2350,22 @@ export default function TaskDetailsScreen() {
                   accessibilityLabel={`Change ${rule.dropoffLabel}: ${draftBooking.dropoff_address ?? ''}`}
                 >
                   <View style={[st.routeDot, { backgroundColor: LightColors.danger }]} />
-                  <Text style={st.routeAddr} numberOfLines={1}>
-                    {draftBooking.dropoff_address}
+                  <Text
+                    style={[st.routeAddr, !draftBooking.dropoff_address && st.routeAddrEmpty]}
+                    numberOfLines={1}
+                  >
+                    {draftBooking.dropoff_address || `Add ${rule.dropoffLabel.toLowerCase()}`}
                   </Text>
                   <Text style={st.changeLink}>Change</Text>
                 </Pressable>
+                {!!errors.dropoff && (
+                  <View style={st.routeError}>
+                    <AlertCircle size={13} color={LightColors.dangerDark} strokeWidth={2.2} />
+                    <Text style={st.routeFieldErrorText} accessibilityLiveRegion="polite" accessibilityRole="alert">
+                      {errors.dropoff}
+                    </Text>
+                  </View>
+                )}
               </>
             )}
 
@@ -2489,11 +2608,16 @@ export default function TaskDetailsScreen() {
                 )}
                 {/* Docks a big, focused editor above the keyboard so long notes
                     aren't cramped behind it (Messenger-style). See KeyboardDockInput. */}
+                {/* Same sentence-case caption as every Input on this form
+                    (the dock's own label is an uppercase eyebrow, which
+                    mixed two label styles in one form). */}
+                <Text style={[st.fieldLabel, { fontSize: mScale(13) }]}>
+                  Special instructions (optional)
+                </Text>
                 <KeyboardDockInput
-                  label="Special Instructions (optional)"
                   value={draftBooking.special_instructions ?? ''}
                   onChangeText={(v) => updateDraft({ special_instructions: v })}
-                  placeholder="Any special notes..."
+                  placeholder="Gate code, landmark, who to ask for…"
                   multiline
                   maxLength={300}
                   chips={INSTRUCTION_TEMPLATES}
@@ -2512,7 +2636,7 @@ export default function TaskDetailsScreen() {
 
             {rule.showItemValue && (
               <Input
-                label="Estimated Item Value (optional)"
+                label="Estimated item value (optional)"
                 value={itemValueText}
                 onChangeText={(v) => {
                   const clean = sanitizeAmount(v);
@@ -2534,7 +2658,7 @@ export default function TaskDetailsScreen() {
               >
                 <Input
                   ref={budgetRef}
-                  label="Shopping Budget *"
+                  label="Shopping budget *"
                   value={budgetText}
                   onChangeText={(v) => {
                     const clean = sanitizeAmount(v);
@@ -2564,7 +2688,11 @@ export default function TaskDetailsScreen() {
 
             {/* Pickup contact */}
             {rule.showPickupContact && (
-              <>
+              <View
+                onLayout={(e) => {
+                  sectionY.current.pickup_contact_phone = e.nativeEvent.layout.y;
+                }}
+              >
                 <Pressable
                   style={st.contactToggle}
                   hitSlop={8}
@@ -2589,7 +2717,7 @@ export default function TaskDetailsScreen() {
                   <>
                     {renderContactFill('pickup')}
                     <Input
-                      label="Contact Name"
+                      label="Contact name"
                       value={draftBooking.pickup_contact_name ?? ''}
                       onChangeText={(v) => updateDraft({ pickup_contact_name: v })}
                       placeholder={`Person at ${rule.pickupLabel.toLowerCase()}`}
@@ -2602,9 +2730,19 @@ export default function TaskDetailsScreen() {
                     />
                     <Input
                       ref={pickupPhoneRef}
-                      label="Contact Phone"
+                      label="Contact phone"
                       value={draftBooking.pickup_contact_phone ?? ''}
-                      onChangeText={(v) => updateDraft({ pickup_contact_phone: v.replace(/[^0-9+]/g, '').slice(0, 13) })}
+                      onChangeText={(v) => {
+                        const phone = v.replace(/[^0-9+]/g, '').slice(0, 13);
+                        updateDraft({ pickup_contact_phone: phone });
+                        // A fixed (or cleared) number clears its flag as it's typed.
+                        if (errors.pickup_contact_phone && (!phone || isPhMobile(phone))) {
+                          setErrors((e) => ({ ...e, pickup_contact_phone: '' }));
+                        }
+                      }}
+                      error={errors.pickup_contact_phone}
+                      // The same PH-mobile check the server runs, passed.
+                      valid={isPhMobile(draftBooking.pickup_contact_phone)}
                       placeholder="e.g. 09171234567"
                       keyboardType="phone-pad"
                       maxLength={13}
@@ -2614,7 +2752,7 @@ export default function TaskDetailsScreen() {
                     />
                   </>
                 )}
-              </>
+              </View>
             )}
 
             {/* Multi-stop: extra destinations after the primary dropoff. Only
@@ -2638,7 +2776,11 @@ export default function TaskDetailsScreen() {
 
             {/* Dropoff contact */}
             {rule.showDropoffContact && (
-              <>
+              <View
+                onLayout={(e) => {
+                  sectionY.current.dropoff_contact_phone = e.nativeEvent.layout.y;
+                }}
+              >
                 <Pressable
                   style={st.contactToggle}
                   hitSlop={8}
@@ -2663,7 +2805,7 @@ export default function TaskDetailsScreen() {
                   <>
                     {renderContactFill('dropoff')}
                     <Input
-                      label="Contact Name"
+                      label="Contact name"
                       value={draftBooking.dropoff_contact_name ?? ''}
                       onChangeText={(v) => updateDraft({ dropoff_contact_name: v })}
                       placeholder={`Person at ${rule.dropoffLabel.toLowerCase()}`}
@@ -2676,9 +2818,17 @@ export default function TaskDetailsScreen() {
                     />
                     <Input
                       ref={dropoffPhoneRef}
-                      label="Contact Phone"
+                      label="Contact phone"
                       value={draftBooking.dropoff_contact_phone ?? ''}
-                      onChangeText={(v) => updateDraft({ dropoff_contact_phone: v.replace(/[^0-9+]/g, '').slice(0, 13) })}
+                      onChangeText={(v) => {
+                        const phone = v.replace(/[^0-9+]/g, '').slice(0, 13);
+                        updateDraft({ dropoff_contact_phone: phone });
+                        if (errors.dropoff_contact_phone && (!phone || isPhMobile(phone))) {
+                          setErrors((e) => ({ ...e, dropoff_contact_phone: '' }));
+                        }
+                      }}
+                      error={errors.dropoff_contact_phone}
+                      valid={isPhMobile(draftBooking.dropoff_contact_phone)}
                       placeholder="e.g. 09171234567"
                       keyboardType="phone-pad"
                       maxLength={13}
@@ -2688,7 +2838,7 @@ export default function TaskDetailsScreen() {
                     />
                   </>
                 )}
-              </>
+              </View>
             )}
           </ScrollView>
 
@@ -2697,6 +2847,13 @@ export default function TaskDetailsScreen() {
         </View>
       )}
       </ExpandableSheet>
+
+      <LocationPermissionSheet
+        isVisible={locationBlocked && phase !== 'details'}
+        onClose={() => setLocationBlocked(false)}
+        placeLabel={(phase === 'dropoff' ? rule.dropoffLabel : rule.pickupLabel).toLowerCase()}
+        onTypeAddress={typeAddressInstead}
+      />
 
       {/* Saved Address Sheet */}
       <SavedAddressSheet
@@ -2846,15 +3003,6 @@ const st = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 3,
-  },
-  stepEyebrow: {
-    fontSize: 10,
-    fontFamily: 'Quicksand_700Bold',
-    letterSpacing: 1.4,
-    textTransform: 'uppercase',
-    color: LightColors.textSecondary,
-    marginBottom: 6,
-    marginLeft: 2,
   },
   backBtn: {
     width: 40,
@@ -3175,6 +3323,25 @@ const st = StyleSheet.create({
     fontFamily: 'Quicksand_400Regular',
     color: LightColors.textPrimary,
   },
+  routeAddrEmpty: {
+    color: LightColors.textSecondary,
+  },
+  // Under the route row's text column (10pt dot + 10pt gap), with the same
+  // icon + red line every Input error uses.
+  routeError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 20,
+    marginTop: -6,
+    marginBottom: 6,
+  },
+  routeFieldErrorText: {
+    flex: 1,
+    marginLeft: 6,
+    fontSize: 12,
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.dangerDark,
+  },
   changeLink: {
     // 12 is the app's smallest text rung — 11 sat under the floor.
     fontSize: 12,
@@ -3364,6 +3531,14 @@ const st = StyleSheet.create({
     fontFamily: 'Quicksand_500Medium',
     color: LightColors.textTertiary,
     marginHorizontal: 6,
+  },
+  // Mirrors Input's caption (components/ui/Input.tsx `fs.label`) for the
+  // one field on this form that isn't an Input.
+  fieldLabel: {
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.textSecondary,
+    marginBottom: 8,
+    marginLeft: 2,
   },
   errorText: {
     fontSize: 12,

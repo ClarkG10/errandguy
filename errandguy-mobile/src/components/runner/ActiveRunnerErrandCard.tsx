@@ -1,18 +1,10 @@
-import React, { useEffect, useRef } from 'react';
-import {
-  View,
-  Text,
-  Pressable,
-  Animated,
-  Easing,
-  StyleSheet,
-} from 'react-native';
+import React from 'react';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ArrowRight, MapPin, Navigation, Package } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../ui/Avatar';
 import { formatRunnerPayout } from '../../utils/runnerPayout';
 import { statusActionLabel } from './StatusActionButton';
-import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors, Elevation } from '../../constants/colors';
 import type { Booking, BookingStatus } from '../../types';
 
@@ -101,39 +93,6 @@ export function ActiveRunnerErrandCard({
   const activeAddress = showingDropoff ? errand.dropoff_address : errand.pickup_address;
   const ActiveIcon = showingDropoff ? Package : Navigation;
 
-  // Subtle breathing on the action chip — signals "next thing to do" without
-  // being a noisy, attention-stealing pulse. Frozen entirely when the OS
-  // "Reduce Motion" preference is on: an indefinite loop is exactly the
-  // kind of animation that setting exists to quiet.
-  const reduceMotion = useReducedMotion();
-  const breathe = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (reduceMotion) {
-      breathe.stopAnimation();
-      breathe.setValue(0);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(breathe, {
-          toValue: 1,
-          duration: 1200,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(breathe, {
-          toValue: 0,
-          duration: 1200,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [breathe, reduceMotion]);
-  const chipScale = breathe.interpolate({ inputRange: [0, 1], outputRange: [1, 1.03] });
-
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     onPress();
@@ -146,25 +105,20 @@ export function ActiveRunnerErrandCard({
       accessibilityLabel={`Active errand for ${customerName}: ${title}`}
       accessibilityHint="Open the errand to update status or navigate"
       android_ripple={{ color: `${LightColors.primary}0F` }}
-      // Box appearance MUST live in className: a Pressable styled only via a
-      // function `style={() => [...]}` with no className drops the StyleSheet's
-      // backgroundColor/border/radius under NativeWind's cssInterop (documented
-      // recurring gotcha). With a className present, both className and the
-      // style function apply, so padding/elevation/pressed in styles.card work.
-      className="bg-surface rounded-3xl border border-divider overflow-hidden"
-      style={({ pressed }) => [
-        styles.card,
-        pressed && { opacity: 0.96, transform: [{ scale: 0.995 }] },
-      ]}
+      // Static style only. A function `style={({pressed}) => …}` dropped the
+      // card's padding on web (the address row and the CTA ran to the card's
+      // edges); the press state rides on className instead.
+      className="active:opacity-90"
+      style={styles.card}
     >
       <View style={styles.headerRow}>
-        <View style={styles.brandStripe} />
-        <Text style={styles.headerLabel}>Current Errand</Text>
-        <View style={styles.amountChip}>
-          <Text style={styles.amountChipText}>
-            {formatRunnerPayout(errand.runner_payout)}
-          </Text>
-        </View>
+        <Text style={styles.headerLabel}>Current errand</Text>
+        <Text
+          style={styles.amountText}
+          accessibilityLabel={`You earn ${formatRunnerPayout(errand.runner_payout)}`}
+        >
+          {formatRunnerPayout(errand.runner_payout)}
+        </Text>
       </View>
 
       <View style={styles.bodyRow}>
@@ -174,7 +128,7 @@ export function ActiveRunnerErrandCard({
           size="md"
         />
         <View style={styles.bodyMeta}>
-          <Text style={styles.titleText} numberOfLines={1}>
+          <Text style={styles.titleText} numberOfLines={2}>
             {title}
           </Text>
           <Text style={styles.subText} numberOfLines={1}>
@@ -183,37 +137,38 @@ export function ActiveRunnerErrandCard({
         </View>
       </View>
 
-      {/* Active address row */}
+      {/* Active address — grouped by spacing, not another box in the card. */}
       <View style={styles.addrRow}>
-        <View style={styles.addrIconWrap}>
-          {showingDropoff ? (
-            <MapPin size={13} color={LightColors.danger} />
-          ) : (
-            <MapPin size={13} color={LightColors.primary} />
-          )}
-        </View>
+        <MapPin
+          size={16}
+          color={showingDropoff ? LightColors.danger : LightColors.primary}
+          strokeWidth={2}
+          style={styles.addrIcon}
+        />
         <Text style={styles.addrText} numberOfLines={2}>
           {activeAddress}
         </Text>
       </View>
 
-      {/* CTA */}
-      <Animated.View style={[styles.ctaWrap, { transform: [{ scale: chipScale }] }]}>
-        <View style={styles.ctaInner}>
-          <ActiveIcon size={14} color={LightColors.textInverse} />
-          <Text style={styles.ctaText}>{copy.cta}</Text>
-          <ArrowRight size={14} color={LightColors.textInverse} />
-        </View>
-      </Animated.View>
+      {/* CTA — the one thing to do from Home while a job is live. */}
+      <View style={styles.ctaInner}>
+        <ActiveIcon size={16} color={LightColors.textInverse} strokeWidth={2} />
+        <Text style={styles.ctaText}>{copy.cta}</Text>
+        <ArrowRight size={16} color={LightColors.textInverse} strokeWidth={2} />
+      </View>
     </Pressable>
   );
 }
 
+// Card 24 − padding 16 → inner corners 8 (rule 14).
+const CARD_RADIUS = 24;
+const CARD_PADDING = 16;
+
 const styles = StyleSheet.create({
   card: {
     backgroundColor: LightColors.surface,
-    borderRadius: 20,
-    padding: 14,
+    borderRadius: CARD_RADIUS,
+    padding: CARD_PADDING,
     overflow: 'hidden',
     // Soft diffuse card lift from the shared elevation scale.
     ...Elevation.sm,
@@ -223,89 +178,72 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
-  },
-  brandStripe: {
-    width: 4,
-    height: 14,
-    borderRadius: 2,
-    backgroundColor: LightColors.primary,
-    marginRight: 8,
+    marginBottom: 14,
   },
   headerLabel: {
     flex: 1,
     fontSize: 11,
     fontFamily: 'Quicksand_700Bold',
     color: LightColors.textSecondary,
-    letterSpacing: 0.4,
+    letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  amountChip: {
-    backgroundColor: LightColors.primarySoft,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  amountChipText: {
-    fontSize: 12,
+  // The payout is the figure a runner checks — plain, bold, tabular; no pill.
+  amountText: {
+    fontSize: 16,
     fontFamily: 'Inter_600SemiBold',
-    color: LightColors.primaryDark,
+    color: LightColors.textPrimary,
+    fontVariant: ['tabular-nums'],
   },
   bodyRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   bodyMeta: {
     flex: 1,
     marginLeft: 12,
   },
   titleText: {
-    fontSize: 15,
+    fontSize: 17,
+    lineHeight: 22,
     fontFamily: 'Quicksand_700Bold',
     color: LightColors.textPrimary,
   },
   subText: {
-    fontSize: 11,
+    fontSize: 13,
     fontFamily: 'Quicksand_500Medium',
-    color: LightColors.textTertiary,
+    color: LightColors.textSecondary,
     marginTop: 2,
   },
   addrRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: LightColors.surfaceMuted,
-    borderRadius: 16,
-    padding: 10,
-    marginBottom: 12,
+    marginBottom: 16,
   },
-  addrIconWrap: {
-    marginRight: 8,
+  addrIcon: {
+    marginRight: 10,
     marginTop: 1,
   },
   addrText: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 14,
     fontFamily: 'Quicksand_500Medium',
     color: LightColors.textSecondary,
-    lineHeight: 17,
-  },
-  ctaWrap: {
-    alignSelf: 'stretch',
+    lineHeight: 20,
   },
   ctaInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: LightColors.primary,
-    borderRadius: 16,
-    paddingVertical: 11,
+    borderRadius: CARD_RADIUS - CARD_PADDING,
+    minHeight: 48,
     gap: 8,
   },
   ctaText: {
-    fontSize: 13,
+    fontSize: 15,
     fontFamily: 'Quicksand_700Bold',
     color: LightColors.textInverse,
-    marginHorizontal: 4,
   },
 });

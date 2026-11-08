@@ -307,7 +307,8 @@ const NotificationRow = React.memo(function NotificationRow({
                 {label}
               </Text>
               <Text
-                className="text-[10px] font-montserrat text-textTertiary ml-2"
+                className="text-[11px] font-montserrat text-textSecondary ml-2"
+                style={{ fontVariant: ['tabular-nums'] }}
                 numberOfLines={1}
               >
                 · {formatRelativeTime(item.created_at)}
@@ -759,8 +760,8 @@ export default function RunnerNotificationsScreen() {
         ListFooterComponent={
           loadingMore ? (
             <View className="py-4 items-center">
-              <Text className="text-[11px] font-montserrat text-textTertiary">
-                Loading…
+              <Text className="text-[12px] font-montserrat text-textSecondary">
+                Loading more…
               </Text>
             </View>
           ) : loadMoreFailed ? (
@@ -782,7 +783,7 @@ export default function RunnerNotificationsScreen() {
             </Pressable>
           ) : !hasMore && notifications.length > 0 ? (
             <View className="py-4 items-center">
-              <Text className="text-xs font-montserrat text-textTertiary">
+              <Text className="text-xs font-montserrat text-textSecondary">
                 You're all caught up
               </Text>
             </View>
@@ -801,11 +802,14 @@ export default function RunnerNotificationsScreen() {
               onRetry={() => notifQ.refresh()}
             />
           ) : (
+            // Pattern 1: why it's empty, then one next step — making sure
+            // offers can actually reach this phone.
             <RunnerEmptyState
               illustration={<Illustration name="empty-notifications" size={168} />}
-              eyebrow="Inbox clear"
               title="No notifications yet"
               description="Errand offers, payouts, and updates will land here as they happen."
+              actionLabel="Check notification settings"
+              onAction={() => router.push('/(runner)/settings/notifications' as any)}
             />
           )
         }

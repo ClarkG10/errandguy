@@ -16,6 +16,7 @@ import { RatingStars } from '../ui/RatingStars';
 import { Button } from '../ui/Button';
 import { LightColors } from '../../constants/colors';
 import { Radius } from '../../constants/radius';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 
 interface RateCustomerModalProps {
   customerName: string;
@@ -33,6 +34,7 @@ export function RateCustomerModal({
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const reduceMotion = useReducedMotion();
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -64,9 +66,13 @@ export function RateCustomerModal({
               showsVerticalScrollIndicator={false}
             >
               <MotiView
-                from={{ opacity: 0, scale: 0.94, translateY: 16 }}
-                animate={{ opacity: 1, scale: 1, translateY: 0 }}
-                transition={{ type: 'spring', damping: 22, stiffness: 240, mass: 0.7 }}
+                from={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, translateY: 16 }}
+                animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1, translateY: 0 }}
+                transition={
+                  reduceMotion
+                    ? { type: 'timing', duration: 120 }
+                    : { type: 'spring', damping: 22, stiffness: 240, mass: 0.7 }
+                }
                 style={{
                   backgroundColor: LightColors.surface,
                   // Radius.modal (20) — matches ConfirmModal, the app's
@@ -79,27 +85,26 @@ export function RateCustomerModal({
               >
                 <View className="items-center mb-4">
                   <Avatar uri={customerAvatar} name={customerName} size="xl" />
-                  <Text className="text-base font-montserrat-bold text-textPrimary mt-2">
+                  <Text
+                    className="text-lg font-montserrat-bold text-textPrimary mt-3 text-center"
+                    accessibilityRole="header"
+                  >
                     Rate {customerName}
                   </Text>
-                  <Text className="text-xs font-montserrat text-textSecondary">
-                    How was your experience?
+                  <Text className="text-[13px] font-montserrat text-textSecondary mt-1 text-center">
+                    How did the errand go?
                   </Text>
                 </View>
 
                 <View className="items-center mb-4">
                   <RatingStars value={rating} onChange={setRating} size={36} />
-                  {/* Explain why Submit is disabled — a disabled CTA with no
-                      stated reason reads as broken. */}
-                  {rating === 0 && (
-                    <Text className="text-xs font-montserrat text-textTertiary mt-2">
-                      Tap a star to submit
-                    </Text>
-                  )}
                 </View>
 
                 {/* Character counter — the comment caps at 200 chars. */}
-                <Text className="text-xs font-montserrat text-textTertiary text-right mb-1">
+                <Text
+                  className="text-xs font-montserrat text-textSecondary text-right mb-1"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   {comment.length}/200
                 </Text>
 
@@ -132,13 +137,16 @@ export function RateCustomerModal({
                     title="Submit"
                     onPress={handleSubmit}
                     disabled={rating === 0 || submitting}
+                    // Explain why Submit is disabled — a disabled CTA with no
+                    // stated reason reads as broken.
+                    disabledReason={rating === 0 ? 'Tap a star to rate' : undefined}
                     loading={submitting}
                     loadingTitle="Submitting…"
                     fullWidth
                   />
                   <Pressable
                     onPress={onSkip}
-                    style={{ alignItems: 'center', paddingVertical: 10 }}
+                    style={{ alignItems: 'center', justifyContent: 'center', minHeight: 44 }}
                     accessibilityRole="button"
                     accessibilityLabel="Skip rating"
                     hitSlop={8}

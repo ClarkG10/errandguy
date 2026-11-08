@@ -26,6 +26,7 @@ import { Spinner } from '../../../components/ui/Spinner';
 import { ChatThreadSkeleton } from '../../../components/ui/Skeleton';
 import { Badge } from '../../../components/ui/Badge';
 import { ErrorState } from '../../../components/ui/ErrorState';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { LightColors } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
 import { formatTime, formatChatDayLabel, localDayKey } from '../../../utils/formatDate';
@@ -468,6 +469,12 @@ export default function SupportThreadScreen() {
             <ErrorState compact error={loadError} onRetry={loadInitial} />
           </View>
         ) : null}
+        {/* Pattern 5: a first load past ~4s says it's the connection. */}
+        <SlowNetworkNotice
+          loading={initialLoading && messages.length === 0 && !loadError}
+          onRetry={loadInitial}
+          style={{ marginHorizontal: 16, marginVertical: 8, alignSelf: 'auto' }}
+        />
 
         {ticket && (ticket.status === 'resolved' || ticket.status === 'closed') ? (
           <View className="px-4 py-2 bg-surfaceMuted border-t border-divider">

@@ -100,7 +100,9 @@ describe('a GCash/Maya booking waiting for its payment', () => {
       TRACKING.indexOf("case 'no_runner':", TRACKING.indexOf("case 'pending':")),
     );
     expect(pending).toMatch(/awaitingPayment\s*\?/);
-    expect(pending).toMatch(/title: 'Waiting for your payment'/);
+    // Specific about the method — "Waiting for your GCash payment" — through
+    // the helper the home card shares (generic wording when it's unknown).
+    expect(pending).toMatch(/title: awaitingPaymentHeadline\(booking\)/);
     expect(pending).toMatch(/paymentDeadlineLine\(/);
     // The pill speaks the same truth.
     expect(TRACKING).toMatch(
@@ -133,8 +135,8 @@ describe('a GCash/Maya booking waiting for its payment', () => {
     expect(noRunner).toMatch(/went back to your ErrandGuy wallet/);
   });
 
-  it('tracking offers Complete payment, wired to the shared verifier', () => {
-    const cta = TRACKING.indexOf('title="Complete payment"');
+  it('tracking offers the payment ("Pay ₱95.00"), wired to the shared verifier', () => {
+    const cta = TRACKING.indexOf('title={payNowLabel(booking)}');
     expect(cta).toBeGreaterThan(-1);
     expect(TRACKING.slice(cta - 300, cta)).toMatch(/awaitingPayment && checkoutUrl \?/);
     expect(TRACKING.slice(cta, cta + 200)).toMatch(/onPress=\{completePayment\}/);

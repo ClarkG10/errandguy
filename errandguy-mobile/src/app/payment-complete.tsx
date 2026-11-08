@@ -1,5 +1,5 @@
-import { useCallback, useEffect } from 'react';
-import { View, Text, StatusBar } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { View, Text, StatusBar, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Spinner } from '../components/ui/Spinner';
 import { Button } from '../components/ui/Button';
@@ -10,6 +10,14 @@ import { usePaymentVerification } from '../hooks/usePaymentVerification';
 import { mapFailureReason } from '../utils/paymentErrors';
 import { bookingPaymentFailure } from '../hooks/useCompleteBookingPayment';
 import { LightColors } from '../constants/colors';
+import { useBookingStore } from '../stores/bookingStore';
+import { bookingService } from '../services/booking.service';
+import type { Booking } from '../types';
+import { useNotificationPermission } from '../hooks/useNotificationPermission';
+import { formatCurrency } from '../utils/formatCurrency';
+import { getErrandTypeRule } from '../constants/errandTypeRules';
+import { BookingSuccess, type BookingSuccessRow } from '../components/customer/booking/BookingSuccess';
+import { paymentMethodLabel } from '../components/customer/booking/paymentMethods';
 
 /**
  * Landing route for the payment return deep link (errandguy://payment-complete).
@@ -27,6 +35,30 @@ export default function PaymentComplete() {
   const isHydrated = usePaymentStore((s) => s.isHydrated);
   const resolve = usePaymentStore((s) => s.resolve);
   const { attempt, stage, isOffline } = usePaymentVerification();
+  // The booking this payment was for (the create response the review screen
+  // stored), for the success screen's pickup/drop-off read-back.
+  const activeBooking = useBookingStore((s) => s.activeBooking);
+  const bookingPaid = attempt?.kind === 'booking' && stage === 'success';
+  const pushPermission = useNotificationPermission(bookingPaid);
+  // A cold relaunch from checkout has no booking in the store: read it once
+  // (best-effort) so the success screen can show where the errand goes.
+  const [fetchedBooking, setFetchedBooking] = useState<Booking | null>(null);
+  const paidBookingId = bookingPaid ? attempt?.bookingId : undefined;
+  const storeHasIt = !!paidBookingId && activeBooking?.id === paidBookingId;
+  useEffect(() => {
+    if (!paidBookingId || storeHasIt) return;
+    let cancelled = false;
+    bookingService
+      .getBooking(paidBookingId)
+      .then((res) => {
+        const fresh = res?.data?.data;
+        if (!cancelled && fresh?.id === paidBookingId) setFetchedBooking(fresh);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [paidBookingId, storeHasIt]);
 
   const goHome = useCallback(() => {
     if (role === 'runner') router.replace('/(runner)/(tabs)');
@@ -80,6 +112,64 @@ export default function PaymentComplete() {
       : bookingFailure?.recovery === 'rebook'
         ? bookingFailure
         : mapFailureReason(attempt.failureReason);
+
+  // A booking payment the server CONFIRMED: the full success screen — the
+  // errand is booked and paid, here's what happens next. (Every other outcome,
+  // and tips/payouts, keep the PaymentProgress card below.)
+  if (bookingPaid) {
+    const booking =
+      activeBooking?.id === attempt.bookingId
+        ? activeBooking
+        : fetchedBooking?.id === attempt.bookingId
+          ? fetchedBooking
+          : null;
+    const rule = getErrandTypeRule(booking?.errand_type?.slug);
+    const method = paymentMethodLabel(attempt.method);
+    const scheduledAtMs = booking?.scheduled_at ? Date.parse(booking.scheduled_at) : NaN;
+    const scheduledLater =
+      booking?.schedule_type === 'scheduled' && Number.isFinite(scheduledAtMs) && scheduledAtMs > Date.now();
+    const rows: BookingSuccessRow[] = [
+      ...(booking?.pickup_address ? [{ label: rule.pickupLabel, value: booking.pickup_address }] : []),
+      ...(booking?.dropoff_address && !rule.singleLocation
+        ? [{ label: rule.dropoffLabel, value: booking.dropoff_address }]
+        : []),
+    ];
+    return (
+      <View style={{ flex: 1, backgroundColor: LightColors.surface }}>
+        <StatusBar barStyle="dark-content" />
+        <BookingSuccess
+          title="Errand booked"
+          announcement="Payment confirmed. Errand booked."
+          facts={[
+            attempt.reference,
+            // "paid" only because the server confirmed this payment.
+            method ? `${formatCurrency(attempt.amount)} paid by ${method}` : formatCurrency(attempt.amount),
+          ]}
+          rows={rows}
+          next={
+            <View>
+              <Text style={styles.nextTitle}>What happens next</Text>
+              <Text style={styles.nextBody}>
+                {scheduledLater
+                  ? 'We’ll match you with a runner shortly before your scheduled time.'
+                  : pushPermission === 'granted'
+                    ? 'We’re finding you a runner — you’ll get a notification when one accepts.'
+                    : 'We’re finding you a runner. Track your errand to see the moment one accepts.'}
+              </Text>
+            </View>
+          }
+          primary={{ title: 'Track errand', onPress: () => routeAfterSuccess(attempt) }}
+          secondary={{
+            title: 'Back to home',
+            onPress: () => {
+              resolve();
+              goHome();
+            },
+          }}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: LightColors.background }}>
@@ -157,3 +247,18 @@ function FinishingUp({ goHome }: { goHome: () => void }) {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  nextTitle: {
+    fontFamily: 'Quicksand_700Bold',
+    fontSize: 15,
+    color: LightColors.textPrimary,
+  },
+  nextBody: {
+    marginTop: 2,
+    fontFamily: 'Quicksand_500Medium',
+    fontSize: 13,
+    lineHeight: 19,
+    color: LightColors.textSecondary,
+  },
+});

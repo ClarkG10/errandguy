@@ -39,8 +39,10 @@ const slides = [
     id: '1',
     eyebrow: 'WHAT IT DOES',
     title: 'Book any errand',
+    // The four errand types the app actually offers, by the names the
+    // booking screen uses.
     description:
-      'Groceries, medicine, food, documents — book it in a tap and a verified runner takes care of the rest.',
+      'Delivery, Buy for me, Queue (pila) or a custom errand — book it in a tap and a verified runner takes care of the rest.',
     image: 'onboarding-book' as const,
   },
   {
@@ -69,6 +71,7 @@ export default function WelcomeScreen() {
   const { width } = useWindowDimensions();
   const flatListRef = useRef<FlatList>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [pageHeight, setPageHeight] = useState(0);
   const reduceMotion = useReducedMotion();
   // Both exit handlers await AsyncStorage before routing, which widens
   // the double-tap window — guard so a second tap can't stack the
@@ -77,7 +80,7 @@ export default function WelcomeScreen() {
 
   // Vector hero — crisp at every density, and responsive so tablets
   // don't get a small floating stamp.
-  const heroSize = Math.min(width * 0.64, 300);
+  const heroSize = Math.min(width * 0.72, 320);
 
   const handleSkip = useCallback(async () => {
     if (navigatingRef.current) return;
@@ -139,8 +142,10 @@ export default function WelcomeScreen() {
               title={item.title}
               description={item.description}
               active={index === activeIndex}
+              height={pageHeight || undefined}
             />
           )}
+          onLayout={(e) => setPageHeight(e.nativeEvent.layout.height)}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
           getItemLayout={(_, index) => ({
@@ -151,9 +156,10 @@ export default function WelcomeScreen() {
         />
 
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-          {/* Pager status — dots + "1 / 3" counter. The container carries
-              the announcement so screen readers hear "Slide X of 3" as the
-              user pages through. */}
+          {/* Pager status — the dots alone (a "1 / 3" counter under them
+              said the same thing twice). The container carries the
+              announcement so screen readers hear "Slide X of 3" as the user
+              pages through. */}
           <View
             style={styles.pagerStatus}
             accessible
@@ -179,9 +185,6 @@ export default function WelcomeScreen() {
                 />
               ))}
             </View>
-            <Text style={styles.pageCounter}>
-              {activeIndex + 1} / {slides.length}
-            </Text>
           </View>
 
           {/* Bottom action row — ghost Skip + solid Next (reference layout).
@@ -201,10 +204,10 @@ export default function WelcomeScreen() {
                   hitSlop={12}
                   accessibilityLabel="Skip onboarding"
                   accessibilityRole="button"
-                  style={({ pressed }) => [
-                    styles.skipBtn,
-                    pressed ? { opacity: 0.55 } : null,
-                  ]}
+                  // Static style + className press state: a function `style`
+                  // on a Pressable can drop its layout under NativeWind.
+                  className="active:opacity-60"
+                  style={styles.skipBtn}
                 >
                   <Text style={styles.skipText}>Skip</Text>
                 </Pressable>
@@ -212,7 +215,7 @@ export default function WelcomeScreen() {
             )}
             <View style={styles.nextBtnWrap}>
               <Button
-                title={isLast ? 'Get Started' : 'Next'}
+                title={isLast ? 'Get started' : 'Next'}
                 fullWidth
                 size="lg"
                 onPress={handleNext}
@@ -221,7 +224,7 @@ export default function WelcomeScreen() {
           </View>
 
           <View style={styles.loginRow}>
-            <Text className="text-[14px] font-montserrat text-textTertiary">
+            <Text className="text-[14px] font-montserrat text-textSecondary">
               Already have an account?{' '}
             </Text>
             <Pressable
@@ -261,21 +264,15 @@ const styles = StyleSheet.create({
   pagerStatus: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 22,
+    marginBottom: 24,
+    // Dots row + slop so the a11y element isn't a 6pt sliver.
+    minHeight: 20,
   },
   pageIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    marginBottom: 8,
-  },
-  pageCounter: {
-    fontFamily: FONT_SEMI,
-    fontWeight: '500',
-    fontSize: 12,
-    letterSpacing: 0.4,
-    color: LightColors.textTertiary,
   },
   // Width + colour of the active dot are animated inline (MotiView).
   pageDot: {

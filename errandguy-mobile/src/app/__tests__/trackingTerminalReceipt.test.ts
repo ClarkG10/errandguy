@@ -62,7 +62,12 @@ describe('customer tracking — the terminal receipt', () => {
     // Rendered from the server's derived fields, never recomputed here.
     expect(SOURCE).toMatch(/const money = bookingMoneyOutcome\(booking\)/);
     expect(SOURCE).toMatch(/const moneyOutcomeSection = isMoneyOutcome \?/);
-    expect(SOURCE).toMatch(/\{moneyOutcomeSection\}/);
+    // Rendered on the receipt — skipped only for an unpaid-payment cancel
+    // where nothing moved, whose red error card already says so.
+    expect(SOURCE).toMatch(/\{showMoneyOutcome \? moneyOutcomeSection : null\}/);
+    expect(SOURCE).toMatch(
+      /const showMoneyOutcome = !\(cancelledUnpaid && !money\.moneyMoved\)/,
+    );
 
     const section = SOURCE.slice(
       SOURCE.indexOf('const moneyOutcomeSection'),

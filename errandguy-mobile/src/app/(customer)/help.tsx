@@ -153,7 +153,7 @@ export default function CustomerHelpScreen() {
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
-        title="Help & Support"
+        title="Help & support"
         showBack
         fallbackHref="/(customer)/(tabs)/profile"
       />

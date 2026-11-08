@@ -7,7 +7,7 @@ export default function CustomerAppearanceScreen() {
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
-        title="Appearance & Accessibility"
+        title="Appearance & accessibility"
         showBack
         fallbackHref="/(customer)/(tabs)/profile"
       />

@@ -45,7 +45,7 @@ export function OfferChip({
     <View
       // Layout lives in className (NativeWind drops flexDirection when a
       // component is styled through `style` alone).
-      className="flex-row items-center gap-1 rounded-full px-2.5 py-1"
+      className="flex-row items-center gap-1.5 rounded-full px-2.5 py-1"
       style={{
         backgroundColor: bg,
         borderWidth: borderColor ? 1 : 0,
@@ -55,8 +55,13 @@ export function OfferChip({
       accessibilityRole="text"
       accessibilityLabel={label}
     >
-      <Icon size={13} color={fg} strokeWidth={2} />
-      <Text className="text-[12px] font-montserrat-bold" style={{ color: fg }}>
+      <Icon size={16} color={fg} strokeWidth={2} />
+      {/* Tabular figures: the chips carry money ("Collect ₱350.00") and
+          counts ("+2 more stops"). */}
+      <Text
+        className="text-[12px] font-montserrat-bold"
+        style={{ color: fg, fontVariant: ['tabular-nums'] }}
+      >
         {label}
       </Text>
     </View>

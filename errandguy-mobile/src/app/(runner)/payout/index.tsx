@@ -14,6 +14,8 @@ import {
   RotateCcw,
   AlertTriangle,
   ChevronRight,
+  AlertCircle,
+  Check,
 } from 'lucide-react-native';
 import { Card } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -22,7 +24,6 @@ import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
-import { Illustration } from '../../../components/ui/Illustration';
 import { SuccessCheck } from '../../../components/ui/SuccessCheck';
 import { WalletActivityRow } from '../../../components/runner/WalletActivityRow';
 import { PayoutDestinationForm } from '../../../components/payout/PayoutDestinationForm';
@@ -172,8 +173,13 @@ export default function PayoutScreen() {
   const [removing, setRemoving] = useState(false);
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [amountInput, setAmountInput] = useState('');
-  // Brief SuccessCheck overlay after a payout request is accepted.
-  const [showPayoutSuccess, setShowPayoutSuccess] = useState(false);
+  // Pattern 10 — after a request is accepted: the big check, the amount, where
+  // it goes and when, then one way on. Null = not showing.
+  const [payoutSuccess, setPayoutSuccess] = useState<{
+    amount: number;
+    to: string | null;
+    message: string | null;
+  } | null>(null);
 
   // Until the runner starts typing, the form follows the saved method — the
   // mount refresh may land after the first render (an incomplete bank then
@@ -194,10 +200,15 @@ export default function PayoutScreen() {
     amountInput.trim() === ''
       ? null
       : requestedAmount > 0 && requestedAmount < minPayout
-      ? `Enter at least ${formatCurrency(minPayout)}`
+      ? `The minimum payout is ${formatCurrency(minPayout)}. Enter at least that much.`
       : requestedAmount > balance
-      ? `Amount exceeds your ${formatCurrency(Math.max(0, balance))} available`
+      ? balance > 0
+        ? `That's more than your ${formatCurrency(balance)} available. Lower it, or tap Withdraw all.`
+        : 'There’s nothing available to withdraw yet.'
       : null;
+  // A check really ran on this amount (minimum and balance) and it passed.
+  const amountValid =
+    amountInput.trim() !== '' && !amountError && requestedAmount >= minPayout && requestedAmount <= balance;
 
   // Scroll target for the "Add a payout method first" gate — a disabled CTA
   // with the fix 600px below it is still a dead end.
@@ -425,11 +436,14 @@ export default function PayoutScreen() {
       payoutKeyRef.current = null;
       setShowRequestModal(false);
       setAmountInput('');
-      // SuccessCheck fires its own success haptic on mount.
-      setShowPayoutSuccess(true);
-      // Prefer the backend's detailed confirmation (amount + destination + ETA)
-      // over a bare "submitted" — falls back to the copy catalog.
-      toast.success(res?.data?.message ?? copy.wallet.payoutRequested);
+      // SuccessCheck fires its own success haptic on mount. The backend's
+      // detailed confirmation (amount + destination + ETA) is the reassurance
+      // line on the success screen, so it isn't repeated in a toast.
+      setPayoutSuccess({
+        amount: requestedAmount,
+        to: method.label ?? null,
+        message: typeof res?.data?.message === 'string' ? res.data.message : null,
+      });
       await onRefresh();
     } catch (err: any) {
       // Keep the key so a retry of THIS payout dedupes server-side. Copy is
@@ -441,6 +455,23 @@ export default function PayoutScreen() {
       confirmLatch.current = false;
     }
   };
+
+  // Why the Request button can't be pressed — said under it, so a greyed-out
+  // CTA is never a mystery (pattern 9). Empty when the inline amount error
+  // already says it, or when nothing blocks the button.
+  const requestBlockedReason = pendingPayout
+    ? 'You can request another once this one is paid out.'
+    : !method.ready
+      ? 'Add a payout method below first.'
+      : owesCommission
+        ? 'Your balance is below zero from cash errands, so there’s nothing to withdraw yet.'
+        : balance <= 0
+          ? 'Nothing to withdraw yet. Earnings from paid-online errands land here.'
+          : amountError
+            ? ''
+            : amountInput.trim() === '' || requestedAmount <= 0
+              ? 'Enter an amount to withdraw.'
+              : '';
 
   return (
     <View className="flex-1 bg-background">
@@ -478,15 +509,16 @@ export default function PayoutScreen() {
             style={{ borderRadius: 24, padding: 24, ...Elevation.md }}
           >
             <View className="flex-row items-center mb-2">
-              <View className="w-9 h-9 rounded-full bg-white/15 items-center justify-center mr-2.5">
+              <View className="w-9 h-9 rounded-full bg-white/20 items-center justify-center mr-2.5">
                 <Wallet size={18} color={LightColors.textInverse} />
               </View>
-              <Text className="text-xs font-montserrat-semi text-white/70 uppercase tracking-wider">
+              <Text className="text-xs font-montserrat-semi text-white/90 uppercase tracking-wider">
                 Available for payout
               </Text>
             </View>
             <Text
               className="text-4xl font-inter-semi tabular-nums text-white"
+              style={{ fontVariant: ['tabular-nums'] }}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.6}
@@ -495,7 +527,7 @@ export default function PayoutScreen() {
               {formatCurrency(Math.abs(balance))}
             </Text>
             {owesCommission ? (
-              <Text className="text-[11px] font-montserrat text-white/85 mt-1.5">
+              <Text className="text-[12px] leading-[17px] font-montserrat text-white/90 mt-1.5">
                 {cashDebtText(balance, runnerProfile)}
               </Text>
             ) : belowMinimum ? (
@@ -503,7 +535,7 @@ export default function PayoutScreen() {
               // bar's visual language (white fill on a translucent-white
               // track) so the runner sees momentum instead of a locked door.
               <View className="mt-3">
-                <Text className="text-[11px] font-inter-semi text-white/90 tabular-nums mb-1.5">
+                <Text className="text-[12px] font-inter-semi text-white/90 tabular-nums mb-1.5">
                   {pesos(balance)} of {pesos(minPayout, Math.ceil)} needed to cash out
                 </Text>
                 <View
@@ -528,7 +560,7 @@ export default function PayoutScreen() {
                 </View>
               </View>
             ) : (
-              <Text className="text-[11px] font-montserrat text-white/70 mt-1">
+              <Text className="text-[12px] font-montserrat tabular-nums text-white/90 mt-1">
                 Withdraw anytime · Min {formatCurrency(minPayout)}
               </Text>
             )}
@@ -540,7 +572,7 @@ export default function PayoutScreen() {
             button so the runner can't accidentally double-submit. */}
         {pendingPayout && (
           <View className="px-5 mb-4">
-            <Card className="flex-row items-center gap-3 p-3 bg-warningLight">
+            <Card padding="none" className="flex-row items-center gap-3 p-3" style={{ backgroundColor: LightColors.warningLight }}>
               <Clock size={18} color={LightColors.warning} />
               <View className="flex-1">
                 <Text className="text-sm font-montserrat-semi text-warningDark">
@@ -549,7 +581,6 @@ export default function PayoutScreen() {
                 <Text className="text-xs font-montserrat mt-0.5 text-textSecondary">
                   {formatCurrency(Math.abs(Number(pendingPayout.amount ?? 0)))} · submitted{' '}
                   {formatMonthDay(pendingPayout.created_at)}.
-                  You can request another after this one is paid out.
                 </Text>
               </View>
             </Card>
@@ -562,7 +593,7 @@ export default function PayoutScreen() {
             reason when the operator/gateway gave one. */}
         {bouncedPayout && !pendingPayout && (
           <View className="px-5 mb-4">
-            <Card className="flex-row items-start gap-3 p-3 bg-dangerSoft">
+            <Card padding="none" className="flex-row items-start gap-3 p-3" style={{ backgroundColor: LightColors.dangerSoft }}>
               <AlertTriangle size={18} color={LightColors.danger} style={{ marginTop: 1 }} />
               <View className="flex-1">
                 <Text className="text-sm font-montserrat-semi text-dangerDark">
@@ -615,21 +646,23 @@ export default function PayoutScreen() {
 
         {/* Amount input + Request Payout */}
         <View className="px-5 mb-6">
-          <Text className="text-xs font-montserrat-bold text-textSecondary uppercase tracking-wider mb-2">
+          {/* A field label, not a section eyebrow — sentence case. */}
+          <Text className="text-[13px] font-montserrat-semi text-textSecondary mb-2">
             Amount to withdraw
           </Text>
           {/* Persistent ₱ prefix keeps the peso context visible once the
               runner starts typing (the placeholder alone vanishes). Raw
               numeric state is unchanged for parsing. */}
           <View
-            className={`flex-row items-center bg-surface border rounded-lg px-3 mb-2 ${
+            className={`flex-row items-center bg-surface border rounded-xl px-3 mb-2 ${
               amountError ? 'border-danger' : 'border-divider'
             }`}
+            style={{ borderWidth: 1.5 }}
           >
-            <Text className="text-base font-inter-semi text-textSecondary mr-1">₱</Text>
+            <Text className="text-lg font-inter-semi text-textSecondary mr-1">₱</Text>
             <TextInput
-              className="flex-1 py-3 text-base font-inter-semi tabular-nums text-textPrimary"
-              style={{ minHeight: 48 }}
+              className="flex-1 py-3 text-lg font-inter-semi tabular-nums text-textPrimary"
+              style={{ minHeight: 52, fontVariant: ['tabular-nums'] }}
               placeholder="0.00"
               placeholderTextColor={LightColors.textMuted}
               value={amountInput}
@@ -637,34 +670,62 @@ export default function PayoutScreen() {
               keyboardType="decimal-pad"
               accessibilityLabel="Amount to withdraw"
             />
+            {amountValid ? (
+              // Decorative: the enabled Request button says the same to a
+              // screen reader.
+              <View
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                className="w-6 h-6 rounded-full bg-successLight items-center justify-center ml-2"
+                testID="payout-amount-valid"
+              >
+                <Check size={14} color={LightColors.successDark} strokeWidth={2.6} />
+              </View>
+            ) : null}
           </View>
           {amountError && (
-            <Text className="text-xs font-montserrat-semi text-dangerDark mb-2">
-              {amountError}
-            </Text>
+            <View className="flex-row items-start mb-2">
+              <AlertCircle
+                size={14}
+                color={LightColors.dangerDark}
+                strokeWidth={2.2}
+                style={{ marginTop: 2, marginRight: 6 }}
+              />
+              <Text
+                className="flex-1 text-[13px] leading-[18px] font-montserrat-semi text-dangerDark"
+                accessibilityLiveRegion="polite"
+                accessibilityRole="alert"
+              >
+                {amountError}
+              </Text>
+            </View>
           )}
           <View className="flex-row items-center justify-between mb-3">
-            <Text className="text-[11px] font-montserrat text-textTertiary">
+            <Text className="flex-1 text-[12px] font-montserrat tabular-nums text-textSecondary mr-3">
               Min {formatCurrency(minPayout)}
               {method.label ? ` · to ${method.label}` : ''}
             </Text>
             {balance > 0 && (
               <Pressable
-                onPress={() => setAmountInput(String(balance))}
-                // Text link is ~14pt tall — hitSlop lifts the effective
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setAmountInput(String(balance));
+                }}
+                // Text link is ~16pt tall — hitSlop lifts the effective
                 // target to >=44pt.
-                hitSlop={{ top: 15, bottom: 15, left: 16, right: 16 }}
+                hitSlop={{ top: 14, bottom: 14, left: 16, right: 16 }}
                 accessibilityRole="button"
                 accessibilityLabel="Set amount to maximum available"
               >
-                <Text className="text-[11px] font-montserrat-semi text-primary">
+                <Text className="text-[13px] font-montserrat-bold text-primary">
                   Withdraw all
                 </Text>
               </Pressable>
             )}
           </View>
           <Button
-            title={pendingPayout ? 'Payout in progress' : 'Request Payout'}
+            title={pendingPayout ? 'Payout in progress' : 'Request payout'}
+            size="lg"
             onPress={handleRequestPayout}
             loading={requesting}
             loadingTitle="Requesting…"
@@ -678,9 +739,10 @@ export default function PayoutScreen() {
               requestedAmount < minPayout ||
               requestedAmount > balance
             }
+            disabledReason={requestBlockedReason}
             fullWidth
           />
-          <Text className="text-[11px] font-montserrat text-textTertiary text-center mt-2">
+          <Text className="text-[12px] font-montserrat text-textSecondary text-center mt-2">
             Payouts usually arrive within 1–3 business days.
           </Text>
         </View>
@@ -690,11 +752,11 @@ export default function PayoutScreen() {
             accurate audit trail without leaving the screen. */}
         <View className="px-5 mb-6">
           <Text className="text-xs font-montserrat-bold text-textSecondary uppercase tracking-wider mb-2">
-            Recent Payouts
+            Recent payouts
           </Text>
           {payoutsQ.loading && recentPayouts.length === 0 ? (
             // First-load skeleton — mirrors the payout row shape.
-            <Card className="p-0 overflow-hidden">
+            <Card padding="none" className="overflow-hidden">
               {[1, 2, 3].map((i) => (
                 <View
                   key={i}
@@ -719,15 +781,14 @@ export default function PayoutScreen() {
               />
             </Card>
           ) : recentPayouts.length === 0 ? (
-            <Card className="p-0">
+            <Card padding="none">
               <RunnerEmptyState
-                eyebrow="Payouts"
                 title="No payouts yet"
                 description={`Request your first payout once you've earned ${formatCurrency(minPayout)}.`}
               />
             </Card>
           ) : (
-            <Card className="p-0 overflow-hidden">
+            <Card padding="none" className="overflow-hidden">
               {recentPayouts.map((tx, idx) => {
                 // Read as a plain string: the server also writes 'reversed'
                 // (WalletService::reversePayout, Xendit payout.reversed) which
@@ -778,9 +839,13 @@ export default function PayoutScreen() {
                       idx < recentPayouts.length - 1 ? 'border-b border-divider' : ''
                     }`}
                   >
-                    <StatusIcon size={18} color={statusColor} style={{ marginTop: 1 }} />
+                    <StatusIcon size={20} color={statusColor} style={{ marginTop: 1 }} />
                     <View className="flex-1 ml-3">
-                      <Text className="text-sm font-inter-semi tabular-nums text-textPrimary">
+                      <Text
+                        className="text-[15px] font-inter-semi tabular-nums text-textPrimary"
+                        style={{ fontVariant: ['tabular-nums'] }}
+                        accessibilityLabel={`${formatCurrency(Math.abs(Number(tx.amount ?? 0)))}, ${statusLabel}`}
+                      >
                         {formatCurrency(Math.abs(Number(tx.amount ?? 0)))}
                       </Text>
                       {/* Two-step processing timeline — Requested →
@@ -826,7 +891,7 @@ export default function PayoutScreen() {
                           <Text
                             className={`text-xs ml-2 flex-1 ${
                               isPending
-                                ? 'font-montserrat text-textTertiary'
+                                ? 'font-montserrat text-textSecondary'
                                 : 'font-montserrat-semi'
                             }`}
                             style={isPending ? undefined : { color: statusTextColor }}
@@ -847,17 +912,8 @@ export default function PayoutScreen() {
                         </Text>
                       )}
                     </View>
-                    <View
-                      className="px-2 py-0.5 rounded-full"
-                      style={{ backgroundColor: statusColor + '15' }}
-                    >
-                      <Text
-                        className="text-[10px] font-montserrat-bold uppercase tracking-wider"
-                        style={{ color: statusTextColor }}
-                      >
-                        {statusLabel}
-                      </Text>
-                    </View>
+{/* No status pill: the timeline line already says Paid / Pending /
+                        Returned, and a pill only repeated it. */}
                   </View>
                 );
               })}
@@ -881,12 +937,12 @@ export default function PayoutScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="See all wallet activity"
               >
-                <Text className="text-[11px] font-montserrat-semi text-primary">See all</Text>
+                <Text className="text-[13px] font-montserrat-bold text-primary">See all</Text>
               </Pressable>
             )}
           </View>
           {activityQ.loading && activity.length === 0 ? (
-            <Card className="p-0 overflow-hidden">
+            <Card padding="none" className="overflow-hidden">
               {[1, 2, 3].map((i) => (
                 <View
                   key={i}
@@ -911,15 +967,14 @@ export default function PayoutScreen() {
               />
             </Card>
           ) : activity.length === 0 ? (
-            <Card className="p-0">
+            <Card padding="none">
               <RunnerEmptyState
-                eyebrow="Wallet"
                 title="No wallet activity yet"
                 description="Earnings, tips, platform fees and payouts will all show up here."
               />
             </Card>
           ) : (
-            <Card className="p-0 overflow-hidden">
+            <Card padding="none" className="overflow-hidden">
               {activity.map((tx, idx) => (
                 <WalletActivityRow
                   key={tx.id}
@@ -959,7 +1014,7 @@ export default function PayoutScreen() {
                     </View>
                   )}
                   <View className="flex-1 ml-3">
-                    <Text className="text-[11px] font-montserrat text-textSecondary">
+                    <Text className="text-[12px] font-montserrat text-textSecondary">
                       Payouts go to
                     </Text>
                     <Text className="text-sm font-montserrat-bold text-textPrimary">
@@ -975,7 +1030,7 @@ export default function PayoutScreen() {
                 {/* Saved by an older app version, which never asked which
                     e-wallet the number belongs to. */}
                 {method.needsChannel ? (
-                  <Text className="text-[11px] font-montserrat-semi text-warningDark mt-3">
+                  <Text className="text-[12px] font-montserrat-semi text-warningDark mt-3">
                     Is this number GCash or Maya? Update it so your payouts go the right way.
                   </Text>
                 ) : null}
@@ -1017,6 +1072,7 @@ export default function PayoutScreen() {
                   loading={saving}
                   loadingTitle="Saving…"
                   disabled={!methodDraft.channel}
+                  disabledReason="Choose GCash, Maya or a bank account first."
                   fullWidth
                 />
                 {method.ready ? (
@@ -1029,19 +1085,44 @@ export default function PayoutScreen() {
       </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Success moment — payout request accepted. SuccessCheck fires
-          its own success haptic; onDone dismisses the overlay. */}
-      {showPayoutSuccess && (
+      {/* Success moment (pattern 10) — the big check, what was requested and
+          where it goes, when to expect it, then one way on. */}
+      {payoutSuccess && (
         <View
-          className="absolute inset-0 items-center justify-center"
+          className="absolute inset-0 items-center justify-center px-6"
           style={{ backgroundColor: `${LightColors.ink}80`, zIndex: 50 }}
+          accessibilityViewIsModal
         >
-          <Illustration
-            name="runner-payout-success"
-            size={180}
-            style={{ marginBottom: 8 }}
-          />
-          <SuccessCheck onDone={() => setShowPayoutSuccess(false)} />
+          <View
+            className="bg-surface items-center w-full px-6 pt-8 pb-6"
+            style={{ borderRadius: 24, maxWidth: 380, ...Elevation.lg }}
+          >
+            <SuccessCheck size={84} />
+            <Text
+              className="text-[20px] font-montserrat-bold text-textPrimary mt-5 text-center"
+              accessibilityRole="header"
+            >
+              Payout requested
+            </Text>
+            <Text
+              className="text-[32px] font-inter-semi tabular-nums text-textPrimary mt-2"
+              style={{ fontVariant: ['tabular-nums'] }}
+            >
+              {formatCurrency(payoutSuccess.amount)}
+            </Text>
+            {payoutSuccess.to ? (
+              <Text className="text-[14px] font-montserrat text-textSecondary mt-1 text-center">
+                to {payoutSuccess.to}
+              </Text>
+            ) : null}
+            <Text className="text-[13px] leading-[19px] font-montserrat text-textSecondary mt-4 text-center">
+              {payoutSuccess.message ??
+                'It usually arrives within 1–3 business days. We’ll let you know when it’s paid out.'}
+            </Text>
+            <View className="w-full mt-6">
+              <Button title="Done" size="lg" fullWidth onPress={() => setPayoutSuccess(null)} />
+            </View>
+          </View>
         </View>
       )}
 

@@ -47,10 +47,12 @@ import { useArchivedNotifications } from '../../../hooks/useArchivedNotification
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
-import { EmptyState } from '../../../components/ui/EmptyState';
-import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { Skeleton, SkeletonCircle } from '../../../components/ui/Skeleton';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
+import { PushOffNotice } from '../../../components/customer/home/PushOffNotice';
+import { StatePanel } from '../../../components/customer/home/StatePanel';
+import { useBookingStore } from '../../../stores/bookingStore';
 import { formatRelativeTime } from '../../../utils/formatDate';
 import { storage } from '../../../utils/storage';
 import type { AppNotification, NotificationType } from '../../../types';
@@ -436,6 +438,12 @@ const NotificationRow = React.memo(function NotificationRow({
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  // The empty inbox's next step: the errand that's running, when there is
+  // one. (The store can also hold a finished errand tracking just loaded.)
+  const liveErrandId = useBookingStore((s) => {
+    const b = s.activeBooking;
+    return b && !['completed', 'cancelled', 'no_runner'].includes(b.status) ? b.id : null;
+  });
   // Per-key selectors so unrelated store updates don't recreate the
   // setter references (which would re-fire `useEffect`s that depend on
   // them and trigger redundant fetches / store writes).
@@ -1024,10 +1032,19 @@ export default function NotificationsScreen() {
           syncing={showArchived ? archived.isStale : notifQ.isStale}
           updatedAt={showArchived ? archived.updatedAt : notifQ.updatedAt}
           error={showArchived ? !!archived.error : !!notifQ.error}
+          // Pattern 4: offline, the cached inbox stays and this says so.
+          offline={!showArchived && !!notifQ.servedFromCacheOffline}
           onRetry={showArchived ? archived.refresh : notifQ.refresh}
           align="flex-start"
         />
       </View>
+
+      {/* Pattern 7: the phone refused notifications. This inbox still fills
+          while the app is open; say so, and offer Settings. */}
+      <PushOffNotice
+        fallbackLine="This list still updates whenever the app is open."
+        style={{ marginHorizontal: 20, marginBottom: 8 }}
+      />
 
       {swipeHintCaption && (
         <View className="flex-row items-center px-5 pb-2">
@@ -1071,7 +1088,10 @@ export default function NotificationsScreen() {
                 Loading…
               </Text>
             </View>
-          ) : (showArchived ? archived.loadMoreFailed : loadMoreFailed) ? (
+          ) : (showArchived ? archived.loadMoreFailed : loadMoreFailed) &&
+            visibleNotifications.length > 0 ? (
+            // Only under rows already shown — on an empty list the error state
+            // above carries the retry, and two retries for one failure is noise.
             // Same inline retry as the runner's history and the wallet.
             <Pressable
               onPress={() => {
@@ -1099,8 +1119,18 @@ export default function NotificationsScreen() {
         ListEmptyComponent={
           initialLoading ? (
             // First fetch in flight — placeholder rows, never the
-            // empty state.
-            <NotificationSkeletonRows />
+            // empty state. Past ~4s, pattern 5 says it's the connection.
+            <View>
+              <NotificationSkeletonRows />
+              <View className="px-5 mt-2">
+                <SlowNetworkNotice
+                  loading
+                  onRetry={() => {
+                    void (showArchived ? archived.refresh() : notifQ.refresh());
+                  }}
+                />
+              </View>
+            </View>
           ) : showArchived ? (
             archived.error ? (
               <ErrorState
@@ -1111,10 +1141,12 @@ export default function NotificationsScreen() {
                 }}
               />
             ) : (
-              <EmptyState
-                illustration={<Illustration name="empty-notifications" size={168} />}
+              <StatePanel
+                icon={Archive}
                 title="Nothing archived"
                 description="Notifications you archive are kept here, so you can read them again or move them back to your inbox."
+                actionLabel="Back to inbox"
+                onAction={() => setShowArchived(false)}
               />
             )
           ) : notifQ.error && notifications.length === 0 ? (
@@ -1127,18 +1159,30 @@ export default function NotificationsScreen() {
             />
           ) : category !== 'all' && notifications.length > 0 ? (
             // The inbox has items, just none in this category.
-            <EmptyState
-              illustration={<Illustration name="empty-notifications" size={168} />}
-              title="Nothing here"
-              description={`No ${CATEGORIES.find((c) => c.key === category)?.label.toLowerCase() ?? ''} notifications yet`}
-              secondaryActionLabel="Show all"
-              onSecondaryAction={() => setCategory('all')}
+            <StatePanel
+              icon={Bell}
+              title={`No ${CATEGORIES.find((c) => c.key === category)?.label.toLowerCase() ?? ''} notifications`}
+              description="Your other notifications are under All."
+              actionLabel="Show all notifications"
+              onAction={() => setCategory('all')}
             />
           ) : (
-            <EmptyState
-              illustration={<Illustration name="empty-notifications" size={168} />}
-              title="No notifications"
-              description="You'll see updates about your errands here"
+            // Pattern 1: why it's empty, then the one next step — follow the
+            // errand that's running, or book one to have something to hear
+            // about.
+            <StatePanel
+              icon={Bell}
+              title="No notifications yet"
+              description="We’ll let you know when a runner accepts your errand, and at every step after that."
+              {...(liveErrandId
+                ? {
+                    actionLabel: 'Track your errand',
+                    onAction: () => router.push(`/(customer)/tracking/${liveErrandId}` as any),
+                  }
+                : {
+                    actionLabel: 'Book an errand',
+                    onAction: () => router.push('/(customer)/book/type' as any),
+                  })}
             />
           )
         }

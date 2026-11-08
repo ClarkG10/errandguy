@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Animated, ScrollView, useWindowDimensions, Platform } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Animated, ScrollView, useWindowDimensions, Platform, Linking, AppState } from 'react-native';
+import * as Location from 'expo-location';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
@@ -19,12 +20,15 @@ import {
   Navigation,
   Volume2,
   VolumeX,
+  MapPinOff,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { HereMapView, HereMarker, HerePolyline, type HereMapViewRef } from '../../../components/map';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { Button } from '../../../components/ui/Button';
-import { Spinner } from '../../../components/ui/Spinner';
+import { Skeleton } from '../../../components/ui/Skeleton';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
+import { PermissionSheet } from '../../../components/ui/PermissionSheet';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useLocationStore } from '../../../stores/locationStore';
 import { useSmartPolling } from '../../../hooks/useSmartPolling';
@@ -256,9 +260,37 @@ export default function NavigateScreen() {
   // Make sure GPS is streaming \u2014 the runner may have opened this
   // screen from a notification cold-start where the dashboard hasn't
   // yet started the watcher.
+  //
+  // A refusal is remembered for the panel below (pattern 7) — without it the
+  // screen sat on "Preparing route" forever with no reason and no way out.
+  const [locationOff, setLocationOff] = useState(false);
+  // The Allow-in-Settings sheet opens on the runner's tap, never by itself:
+  // startTracking has just shown the OS dialog (or the permanently-denied
+  // "Open Settings" alert), so popping a sheet now would ask twice in a row.
+  const [showLocationSheet, setShowLocationSheet] = useState(false);
   useEffect(() => {
-    if (!isTracking) startTracking().catch(() => {});
+    if (!isTracking) {
+      startTracking()
+        .then((ok) => setLocationOff(!ok))
+        .catch(() => {});
+    }
   }, [isTracking, startTracking]);
+  // Back from Settings with location now allowed: start GPS without another
+  // tap. Checked silently first — calling startTracking while still denied
+  // would raise the OS settings prompt on every return to the app.
+  useEffect(() => {
+    if (!locationOff) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      Location.getForegroundPermissionsAsync()
+        .then(({ status }) => {
+          if (status !== 'granted') return;
+          return startTracking().then((ok) => setLocationOff(!ok));
+        })
+        .catch(() => {});
+    });
+    return () => sub.remove();
+  }, [locationOff, startTracking]);
 
   // Hydrate booking when the store is empty (deep link / cold start).
   // The endpoint is server-scoped to the runner's bookings, so a 200
@@ -632,7 +664,7 @@ export default function NavigateScreen() {
         // Stay on the navigation view — the "I've Arrived" button is still
         // right there for the runner's own arrival confirm.
         setArriving(false);
-        toast.success('Status updated — tap “I’ve Arrived” to confirm.');
+        toast.success('Status updated — tap “I’ve arrived” to confirm.');
         return;
       }
       router.back();
@@ -817,7 +849,7 @@ export default function NavigateScreen() {
               (reassigned, or a stale notification). */}
           <View className="items-center pb-10">
             <Button
-              title="Go to Home"
+              title="Back to home"
               variant="outline"
               onPress={() => router.dismissTo('/(runner)/(tabs)' as any)}
             />
@@ -825,11 +857,32 @@ export default function NavigateScreen() {
         </SafeAreaView>
       );
     }
+    // Pattern 2: the shape of the navigation screen (turn banner, map, ETA
+    // sheet), not a bare spinner. Pattern 5: the slow-connection line after ~4s.
     return (
-      <View className="flex-1 bg-background items-center justify-center">
-        <Spinner size="small" color={LightColors.primary} />
-        <Text className="mt-3 text-xs font-montserrat text-textSecondary">Preparing navigation…</Text>
-      </View>
+      <SafeAreaView
+        className="flex-1 bg-surfaceMuted"
+        edges={['top']}
+        accessibilityLabel="Preparing navigation"
+      >
+        <View className="px-3 pt-2">
+          <Skeleton width="100%" height={92} borderRadius={16} />
+        </View>
+        <View className="flex-1" />
+        <View className="bg-surface rounded-t-3xl px-5 pt-4 pb-8">
+          <View className="items-center mb-4">
+            <Skeleton width={40} height={4} borderRadius={2} />
+          </View>
+          <View className="flex-row items-center justify-between">
+            <View className="flex-1">
+              <Skeleton width="40%" height={26} style={{ marginBottom: 8 }} />
+              <Skeleton width="60%" height={12} />
+            </View>
+            <Skeleton width={84} height={48} borderRadius={14} />
+          </View>
+          <SlowNetworkNotice loading style={{ marginTop: 16 }} />
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -875,8 +928,10 @@ export default function NavigateScreen() {
           }}
           accessibilityRole="button"
           accessibilityLabel="Back to errand"
-          className="px-6 rounded-xl bg-primary items-center justify-center"
-          style={({ pressed }) => ({ minHeight: 48, opacity: pressed ? 0.9 : 1 })}
+          // Static style: a function `style` next to className was dropped,
+          // which left this button without its 48pt height.
+          className="px-6 rounded-xl bg-primary items-center justify-center active:opacity-60"
+          style={{ minHeight: 48 }}
           android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
         >
           <Text className="text-white text-sm font-montserrat-bold">Back to errand</Text>
@@ -889,19 +944,21 @@ export default function NavigateScreen() {
     return (
       <SafeAreaView className="flex-1 bg-background items-center justify-center px-8" edges={['top']}>
         <AlertTriangle size={28} color={LightColors.dangerDark} />
-        <Text className="text-base font-montserrat-bold text-textPrimary mt-3 mb-1">No destination</Text>
+        <Text className="text-base font-montserrat-bold text-textPrimary mt-3 mb-1">
+          No address to navigate to
+        </Text>
         <Text className="text-xs font-montserrat text-textSecondary text-center mb-4">
-          This errand doesn't have a navigable destination right now.
+          This errand has no map pin for its next stop. Go back and check the address in the errand details, or call the customer.
         </Text>
         <Pressable
           onPress={() => router.back()}
           accessibilityRole="button"
           accessibilityLabel="Go back"
-          className="px-6 rounded-xl bg-primary items-center justify-center"
-          style={({ pressed }) => ({ minHeight: 48, opacity: pressed ? 0.9 : 1 })}
+          className="px-6 rounded-xl bg-primary items-center justify-center active:opacity-60"
+          style={{ minHeight: 48 }}
           android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
         >
-          <Text className="text-white text-sm font-montserrat-bold">Go Back</Text>
+          <Text className="text-white text-sm font-montserrat-bold">Go back</Text>
         </Pressable>
       </SafeAreaView>
     );
@@ -994,15 +1051,19 @@ export default function NavigateScreen() {
             {/* Distance-to-turn is the primary glance target \u2014 large,
                 full-opacity, tabular Inter so the digits don't jitter. */}
             <Text
-              className="text-white text-[16px] font-inter-semi uppercase tracking-wide"
+              className="text-white text-[16px] font-inter-semi"
               style={{ fontVariant: ['tabular-nums'] }}
             >
               {distanceToNextManeuver != null
                 ? `In ${fmtDistance(distanceToNextManeuver)}`
                 : routeLoading
-                ? 'Calculating\u2026'
+                ? 'Calculating route\u2026'
                 : routeError
                 ? 'Route unavailable'
+                : !origin
+                ? locationOff
+                  ? 'Waiting for location'
+                  : 'Finding your location\u2026'
                 : 'Preparing route'}
             </Text>
             <Text
@@ -1032,7 +1093,7 @@ export default function NavigateScreen() {
             // glyph swap) so "voice off" is unmistakable in a sunlit glance;
             // unmuted stays translucent on the blue banner.
             className={`w-10 h-10 rounded-full items-center justify-center ml-2 ${
-              voiceMuted ? 'bg-warning' : 'bg-white/15'
+              voiceMuted ? 'bg-warning' : 'bg-white/20'
             }`}
             accessibilityRole="button"
             accessibilityLabel={voiceMuted ? 'Unmute voice guidance' : 'Mute voice guidance'}
@@ -1047,7 +1108,7 @@ export default function NavigateScreen() {
           <Pressable
             onPress={handleEndNavigation}
             hitSlop={10}
-            className="w-10 h-10 rounded-full bg-white/15 items-center justify-center ml-2"
+            className="w-10 h-10 rounded-full bg-white/20 items-center justify-center ml-2"
             accessibilityRole="button"
             accessibilityLabel="End navigation"
           >
@@ -1082,10 +1143,9 @@ export default function NavigateScreen() {
             accessibilityRole="button"
             accessibilityLabel="Open in another navigation app"
             accessibilityHint="Long press to choose between Waze and Maps"
-            className="ml-2 rounded-xl bg-black/80 px-3 py-1.5 flex-row items-center"
-            style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}
+            className="ml-2 rounded-xl bg-black/80 px-3 py-1.5 flex-row items-center active:opacity-60"
           >
-            <ExternalLink size={13} color={LightColors.textInverse} strokeWidth={2} />
+            <ExternalLink size={16} color={LightColors.textInverse} strokeWidth={2} />
             <Text className="text-white text-[12px] font-montserrat-semi ml-1.5">
               {preferredNavApp === 'waze'
                 ? 'Waze'
@@ -1095,6 +1155,24 @@ export default function NavigateScreen() {
             </Text>
           </Pressable>
         </View>
+
+        {/* Pattern 7: a calm line saying why there's no route, and the way
+            back (the sheet below: Allow in Settings, or another nav app). */}
+        {!origin && locationOff ? (
+          <Pressable
+            onPress={() => setShowLocationSheet(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Location is off. Turn it on to get a route"
+            className="mx-3 mt-2 rounded-2xl bg-surface px-4 flex-row items-center"
+            style={{ minHeight: 48, ...Elevation.md }}
+          >
+            <MapPinOff size={20} color={LightColors.textSecondary} strokeWidth={2} />
+            <Text className="flex-1 ml-2 text-[13px] font-montserrat-semi text-textPrimary">
+              Location is off — no route yet
+            </Text>
+            <Text className="text-[13px] font-montserrat-bold text-primary">Turn on</Text>
+          </Pressable>
+        ) : null}
       </SafeAreaView>
 
       {/* Greeting / trip summary card \u2014 fades in once the route is
@@ -1121,12 +1199,12 @@ export default function NavigateScreen() {
             style={Elevation.lg}
           >
             <View className={`w-11 h-11 rounded-full items-center justify-center mr-3 ${
-              inPickupPhase ? 'bg-primary/15' : 'bg-danger/15'
+              inPickupPhase ? 'bg-primary/20' : 'bg-danger/20'
             }`}>
               <MapPin size={20} color={inPickupPhase ? LightColors.primary : LightColors.dangerDark} strokeWidth={2.2} />
             </View>
             <View className="flex-1">
-              <Text className="text-[10px] font-montserrat-bold uppercase text-textTertiary" style={{ letterSpacing: 1.2 }}>
+              <Text className="text-[11px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.2 }}>
                 Heading to {inPickupPhase ? 'pickup' : 'drop-off'}
               </Text>
               <Text className="text-[14px] font-montserrat-bold text-textPrimary mt-0.5" numberOfLines={2}>
@@ -1167,14 +1245,14 @@ export default function NavigateScreen() {
           {/* Gauge glyph + km/h unit make it unmistakably a speed readout,
               so the illegible 8px "SPEED" sub-label is dropped and the
               number carries the whole chip at a glanceable size. */}
-          <Gauge size={15} color={LightColors.textMuted} strokeWidth={2.2} />
+          <Gauge size={16} color={LightColors.textSecondary} strokeWidth={2.2} />
           <Text
             className="text-[24px] font-inter-semi text-textPrimary ml-1.5 leading-[26px]"
             style={{ fontVariant: ['tabular-nums'] }}
           >
             {speedKmh}
           </Text>
-          <Text className="text-[11px] font-montserrat-semi text-textTertiary ml-1">
+          <Text className="text-[12px] font-montserrat-semi text-textSecondary ml-1">
             km/h
           </Text>
         </View>
@@ -1206,12 +1284,23 @@ export default function NavigateScreen() {
         <View className="px-5 pt-2 pb-2">
           <View className="flex-row items-end justify-between">
             <View className="flex-1">
-              <Text
-                className="text-[28px] font-inter-semi text-textPrimary leading-tight"
-                style={{ fontVariant: ['tabular-nums'] }}
-              >
-                {remainingDuration != null ? fmtDuration(remainingDuration) : '\u2014'}
-              </Text>
+              {remainingDuration != null ? (
+                <Text
+                  className="text-[28px] font-inter-semi text-textPrimary leading-tight"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
+                  {fmtDuration(remainingDuration)}
+                </Text>
+              ) : (
+                // No ETA yet — say why instead of a lone dash.
+                <Text className="text-[17px] font-montserrat-bold text-textPrimary">
+                  {routeError || (!origin && locationOff)
+                    ? 'No route yet'
+                    : !origin
+                    ? 'Finding you\u2026'
+                    : 'Calculating\u2026'}
+                </Text>
+              )}
               <Text
                 className="text-[12px] font-inter text-textSecondary mt-0.5"
                 style={{ fontVariant: ['tabular-nums'] }}
@@ -1231,12 +1320,12 @@ export default function NavigateScreen() {
                 // successDark (#15803D) clears 4.5:1 with white at this
                 // label size; larger label + target for a stopping glance.
                 // rounded-xl (14) matches the app CTA corner, not a pill.
-                className="px-6 rounded-xl bg-successDark ml-3 items-center justify-center"
-                style={({ pressed }) => ({ minHeight: 48, opacity: pressed ? 0.9 : 1 })}
+                className="px-6 rounded-xl bg-successDark ml-3 items-center justify-center active:opacity-60"
+                style={{ minHeight: 48 }}
                 android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
               >
                 <Text className="text-white text-[15px] font-montserrat-bold">
-                  {arriving ? 'Marking…' : 'I’ve Arrived'}
+                  {arriving ? 'Marking…' : 'I’ve arrived'}
                 </Text>
               </Pressable>
             ) : (
@@ -1244,8 +1333,8 @@ export default function NavigateScreen() {
                 onPress={handleEndNavigation}
                 accessibilityRole="button"
                 accessibilityLabel="End navigation"
-                className="px-6 rounded-xl bg-surfaceMuted border border-dividerStrong ml-3 items-center justify-center"
-                style={({ pressed }) => ({ minHeight: 48, opacity: pressed ? 0.85 : 1 })}
+                className="px-6 rounded-xl bg-surfaceMuted border border-dividerStrong ml-3 items-center justify-center active:opacity-60"
+                style={{ minHeight: 48 }}
                 android_ripple={{ color: 'rgba(15,23,42,0.08)' }}
               >
                 <Text className="text-textPrimary text-[15px] font-montserrat-bold">End</Text>
@@ -1264,11 +1353,8 @@ export default function NavigateScreen() {
                 }}
                 accessibilityRole="button"
                 accessibilityLabel="Retry route"
-                className="mt-3 rounded-xl bg-primary items-center justify-center"
-                style={({ pressed }) => ({
-                  minHeight: 48,
-                  opacity: pressed ? 0.9 : 1,
-                })}
+                className="mt-3 rounded-xl bg-primary items-center justify-center active:opacity-60"
+                style={{ minHeight: 48 }}
                 android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
               >
                 <Text className="text-white text-[15px] font-montserrat-bold">Retry route</Text>
@@ -1286,16 +1372,23 @@ export default function NavigateScreen() {
                 // The pill itself is ~30pt tall; hitSlop lifts the
                 // effective target to >=44pt without inflating the visual.
                 hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}
-                style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
-                className="mt-3 mb-1 self-center px-4 py-2 rounded-full bg-danger/10"
+                className="mt-3 mb-1 self-center px-4 py-2 rounded-full bg-danger/10 active:opacity-60"
               >
                 {/* dangerDark (#B91C1C) — base danger at 12px on the soft
                     wash measures ~3.6:1, below the 4.5:1 AA floor. */}
-                <Text className="text-dangerDark text-[12px] font-montserrat-bold uppercase tracking-wider">
-                  Retry route
+                <Text className="text-dangerDark text-[13px] font-montserrat-bold">
+                  Couldn’t refresh the route · Retry
                 </Text>
               </Pressable>
             ))}
+          {/* Pattern 5: a route that is taking a while says so. */}
+          <SlowNetworkNotice
+            loading={routeLoading && !navRoute}
+            onRetry={() => {
+              void fetchNav();
+            }}
+            style={{ marginTop: 12 }}
+          />
         </View>
 
         {/* Upcoming steps list — visible when sheet is expanded to half / full */}
@@ -1316,7 +1409,7 @@ export default function NavigateScreen() {
                       {step.instruction}
                     </Text>
                     <Text
-                      className="text-[12px] font-inter text-textTertiary mt-0.5"
+                      className="text-[12px] font-inter text-textSecondary mt-0.5"
                       style={{ fontVariant: ['tabular-nums'] }}
                     >
                       {fmtDistance(step.distanceMeters)}
@@ -1356,6 +1449,26 @@ export default function NavigateScreen() {
         loading={arriving}
         onConfirm={handleConfirmArrived}
         onCancel={() => setShowArrivedPrompt(false)}
+      />
+
+      {/* Pattern 7: location refused — Allow in Settings, or another nav app. */}
+      <PermissionSheet
+        isVisible={showLocationSheet && !origin}
+        onClose={() => setShowLocationSheet(false)}
+        kind="location"
+        reason="Turn-by-turn needs your location to plan your route."
+        onOpenSettings={() => {
+          setShowLocationSheet(false);
+          Linking.openSettings().catch(() => {});
+        }}
+        // Waze / Maps use their own location access, so this works without ours.
+        alternativeLabel="Navigate in another app"
+        onAlternative={() => {
+          setShowLocationSheet(false);
+          // Let the sheet's Modal finish closing before the app chooser's
+          // Modal opens (iOS drops a Modal presented mid-dismiss).
+          setTimeout(handleExternalNavPress, 350);
+        }}
       />
 
       {/* External navigation chooser — mirrors the errand screen's sheet. */}
@@ -1401,7 +1514,7 @@ export default function NavigateScreen() {
             <ChevronRight size={16} color={LightColors.textTertiary} />
           </Pressable>
         ))}
-        <Text className="text-[11px] font-montserrat text-textTertiary mt-1 leading-[15px]">
+        <Text className="text-[12px] font-montserrat text-textSecondary mt-1 leading-[17px]">
           We’ll remember your choice. Live tracking pauses while you’re outside
           ErrandGuy — come back here to update your status.
         </Text>

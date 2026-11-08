@@ -3,7 +3,6 @@ import { View, Text, ScrollView, AppState, Linking } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import {
   Bell,
-  BellOff,
   MessageSquare,
   Wallet,
   FileCheck2,
@@ -12,6 +11,7 @@ import {
 } from 'lucide-react-native';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Card } from '../../../components/ui/Card';
+import { PermissionPrompt } from '../../../components/ui/PermissionSheet';
 import { Button } from '../../../components/ui/Button';
 import { LightColors } from '../../../constants/colors';
 import { useResponsive } from '../../../constants/responsive';
@@ -65,13 +65,13 @@ interface NotifKind {
 const KINDS: NotifKind[] = [
   {
     key: 'new_errands',
-    label: 'New Errand Requests',
+    label: 'New errand offers',
     description: 'An errand was offered to you. Accept or decline it before the timer runs out',
     icon: Bell,
   },
   {
     key: 'messages',
-    label: 'Chat Messages',
+    label: 'Chat messages',
     description: 'A customer messaged you about an errand in progress',
     icon: MessageSquare,
   },
@@ -80,7 +80,7 @@ const KINDS: NotifKind[] = [
   // sends nothing) — the row promised a notification that never comes.
   {
     key: 'wallet',
-    label: 'Wallet & Payouts',
+    label: 'Wallet & payouts',
     description: 'A payout was sent or came back, or your wallet balance was adjusted',
     icon: Wallet,
   },
@@ -92,7 +92,7 @@ const KINDS: NotifKind[] = [
   },
   {
     key: 'alerts',
-    label: 'Safety Alerts',
+    label: 'Safety alerts',
     description: 'Emergency and safety notifications',
     icon: AlertTriangle,
     locked: true,
@@ -137,73 +137,76 @@ export default function NotificationsScreen() {
     Linking.openSettings().catch(() => {});
   }, []);
 
+  // The off state is the permission prompt below; this line covers the rest.
   const statusLine =
-    granted === null
-      ? 'Checking your device settings…'
-      : granted
-        ? 'Notifications are on for ErrandGuy.'
-        : "Notifications are off. You won't be alerted about new errands, messages, payouts or safety alerts until you turn them back on.";
+    granted === null ? 'Checking your device settings…' : 'Notifications are on for ErrandGuy.';
 
   return (
     <View className="flex-1 bg-background">
       <GradientHeader title="Notifications" showBack fallbackHref="/(runner)/(tabs)/profile" />
 
       <ScrollView
-        className="flex-1 px-5"
+        className="flex-1"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
+          // Gutter on the content, not the ScrollView: as a className it was
+          // applied twice on web and pushed the column in to 40pt.
+          paddingHorizontal: 20,
           paddingBottom: 40,
           maxWidth: contentMaxWidth,
           width: '100%',
           alignSelf: 'center',
         }}
       >
-        {/* The one control on this screen that actually does something. */}
-        <Card className={`p-4 ${granted === false ? 'bg-dangerSoft' : ''}`}>
-          <View className="flex-row items-center gap-3">
-            <View
-              className={`w-10 h-10 rounded-full items-center justify-center ${
-                granted === false ? 'bg-surface' : 'bg-surfaceMuted'
-              }`}
-            >
-              {granted === false ? (
-                <BellOff size={18} color={LightColors.dangerDark} strokeWidth={1.8} />
-              ) : (
-                <Bell size={18} color={LightColors.primary} strokeWidth={1.8} />
-              )}
-            </View>
-            <View className="flex-1">
-              <Text className="text-[14px] font-montserrat-semi text-textPrimary">
-                Device notifications
-              </Text>
-              <Text
-                className={`text-sm font-montserrat mt-0.5 ${
-                  granted === false ? 'text-dangerDark' : 'text-textSecondary'
-                }`}
-                accessibilityLiveRegion="polite"
-              >
-                {statusLine}
-              </Text>
-            </View>
-          </View>
-
-          <View className="mt-3">
-            <Button
-              title={granted === false ? 'Turn on notifications' : 'Open device settings'}
-              onPress={openDeviceSettings}
-              variant={granted === false ? 'primary' : 'secondary'}
-              size="sm"
-              fullWidth
-              accessibilityHint="Opens the ErrandGuy notification settings on your device"
+        {/* The one control on this screen that actually does something. Off
+            is pattern 7: the owner's permission prompt (why, Allow in
+            Settings), with the no-permission fallback folded into the why. */}
+        {granted === false ? (
+          <Card padding="none" className="px-4 pt-5 pb-4">
+            <PermissionPrompt
+              kind="notifications"
+              reason="Offers, messages and safety alerts can’t reach a locked phone without them, so until then keep ErrandGuy open while you’re online — offers still show on screen."
+              settingsLabel="Turn on notifications"
+              onOpenSettings={openDeviceSettings}
             />
-          </View>
-        </Card>
+          </Card>
+        ) : (
+          <Card padding="none" className="p-4">
+            <View className="flex-row items-center gap-3">
+              <View className="w-10 h-10 rounded-full items-center justify-center bg-surfaceMuted">
+                <Bell size={20} color={LightColors.primary} strokeWidth={1.8} />
+              </View>
+              <View className="flex-1">
+                <Text className="text-[14px] font-montserrat-semi text-textPrimary">
+                  Device notifications
+                </Text>
+                <Text
+                  className="text-sm font-montserrat mt-0.5 text-textSecondary"
+                  accessibilityLiveRegion="polite"
+                >
+                  {statusLine}
+                </Text>
+              </View>
+            </View>
+
+            <View className="mt-3">
+              <Button
+                title="Open device settings"
+                onPress={openDeviceSettings}
+                variant="secondary"
+                size="md"
+                fullWidth
+                accessibilityHint="Opens the ErrandGuy notification settings on your device"
+              />
+            </View>
+          </Card>
+        )}
 
         <Text className="text-sm font-montserrat-bold text-textSecondary mt-5 mb-2">
           What we send you
         </Text>
 
-        <Card className="p-0 overflow-hidden">
+        <Card padding="none" className="overflow-hidden">
           {KINDS.map((kind, idx) => {
             return (
               <View
@@ -218,7 +221,7 @@ export default function NotificationsScreen() {
                 }
               >
                 <View className="w-10 h-10 rounded-full items-center justify-center mr-3 bg-surfaceMuted">
-                  <kind.icon size={18} color={LightColors.primary} strokeWidth={1.8} />
+                  <kind.icon size={20} color={LightColors.primary} strokeWidth={1.8} />
                 </View>
                 <View className="flex-1">
                   <Text className="text-[14px] font-montserrat-semi text-textPrimary">
@@ -229,8 +232,8 @@ export default function NotificationsScreen() {
                   </Text>
                   {kind.locked && (
                     <View className="flex-row items-center gap-1 mt-1">
-                      <Lock size={11} color={LightColors.textTertiary} strokeWidth={2} />
-                      <Text className="text-xs font-montserrat text-textTertiary">
+                      <Lock size={12} color={LightColors.textSecondary} strokeWidth={2} />
+                      <Text className="text-xs font-montserrat text-textSecondary">
                         Always on for your safety
                       </Text>
                     </View>

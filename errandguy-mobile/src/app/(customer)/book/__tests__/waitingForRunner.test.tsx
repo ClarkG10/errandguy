@@ -224,6 +224,49 @@ describe('waiting for a runner', () => {
 });
 
 /**
+ * A freshly booked errand lands on the success screen (pattern 10): a specific
+ * headline, the facts, where it goes, what happens next — while the search
+ * keeps running underneath.
+ */
+describe('the errand-booked success screen', () => {
+  it('confirms what was booked and offers Track errand and Back to home', () => {
+    useBookingStore.setState({
+      activeBooking: booking('pending', { payment_method: 'cash' }),
+      draftBooking: {},
+    });
+    const { getByText } = renderScreen();
+    expect(getByText('Errand booked')).toBeTruthy();
+    expect(getByText('EG-2026-00042 · ₱92.00 · Cash on delivery')).toBeTruthy();
+    expect(getByText('123 Pickup St, Manila')).toBeTruthy();
+    expect(getByText('456 Dropoff Ave, Quezon City')).toBeTruthy();
+    // What happens next is the live search itself.
+    expect(getByText('Looking for a runner nearby…')).toBeTruthy();
+
+    fireEvent.press(getByText('Track errand'));
+    expect(mockReplace).toHaveBeenCalledWith('/(customer)/tracking/bk-1');
+    fireEvent.press(getByText('Back to home'));
+    expect(mockReplace).toHaveBeenCalledWith('/(customer)/(tabs)');
+  });
+
+  it('a search started again is no longer news — no second "Errand booked"', async () => {
+    (bookingService.retryMatch as jest.Mock).mockResolvedValue({
+      data: { data: booking('pending'), meta: { radius_km: 10, widen_step: 1 } },
+    });
+    const { getByText, queryByText } = renderScreen();
+    expect(getByText('Errand booked')).toBeTruthy();
+
+    serverSays('no_runner');
+    await flush();
+    await act(async () => {
+      fireEvent.press(getByText('Search again'));
+    });
+
+    expect(getByText('Looking for a runner nearby…')).toBeTruthy();
+    expect(queryByText('Errand booked')).toBeNull();
+  });
+});
+
+/**
  * A prepaid errand is refunded to the wallet the moment it goes no_runner,
  * so the server will never search it again (it would run for free). The
  * screen used to offer "Search again" anyway — which 409'd every time with

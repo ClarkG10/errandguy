@@ -129,9 +129,12 @@ export function RunnerActiveMap({
             : 'mx-5 h-48 bg-surfaceMuted rounded-2xl items-center justify-center mb-4'
         }
       >
-        <Navigation size={28} color={LightColors.textMuted} />
-        <Text className="text-xs font-montserrat text-textSecondary mt-2">
+        <Navigation size={24} color={LightColors.textSecondary} />
+        <Text className="text-[13px] font-montserrat-semi text-textSecondary mt-2">
           Map unavailable
+        </Text>
+        <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
+          This errand has no map pins yet.
         </Text>
       </View>
     );
@@ -215,7 +218,10 @@ export function RunnerActiveMap({
             zIndex: 20,
           }}
         >
-          <Text className="text-[11px] font-montserrat-bold text-textPrimary">
+          <Text
+            className="text-[12px] font-montserrat-bold text-textPrimary"
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
             {/* Shared renderer — the local `${n} min` had no hour rollover,
                 so a long cross-city leg read "95 min" here while the
                 navigation bar for the same leg read "1h 35m". */}

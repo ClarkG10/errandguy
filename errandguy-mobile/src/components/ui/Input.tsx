@@ -10,7 +10,7 @@ import {
   type TextInputProps,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { Eye, EyeOff } from 'lucide-react-native';
+import { Eye, EyeOff, Check, AlertCircle } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
@@ -39,6 +39,10 @@ interface InputProps extends Omit<TextInputProps, 'onChange'> {
    *  for multiline and numeric/phone keyboards — which have no return key, so the
    *  keyboard otherwise traps the user over the field. Pass false to force off. */
   keyboardToolbar?: boolean;
+  /** The value passed this field's check — shows a quiet success tick at the
+   *  right edge. Ignored while `error` is set. Only pass it where a check
+   *  actually ran (format, match), never just because the field is filled. */
+  valid?: boolean;
 }
 
 /** Imperative surface exposed via ref — lets screens chain focus from a
@@ -82,6 +86,7 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
     onFocus,
     onBlur,
     keyboardToolbar,
+    valid,
     ...rest
   }: InputProps,
   ref,
@@ -142,14 +147,21 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
   // Filled → focused transition: muted fill at rest, white + blue
   // border when active. Border width is constant so focus never
   // shifts layout.
+  // A passed check shows only once the field is filled — an empty field
+  // can't be "valid" in a way worth a green border.
+  const showValid = !!valid && !error && value != null && String(value).length > 0;
   const borderColor = error
     ? LightColors.danger
     : focused
       ? LightColors.primary
-      : 'transparent';
+      : showValid
+        ? VALID_BORDER
+        : 'transparent';
   const backgroundColor =
-    focused || error ? LightColors.surface : LightColors.surfaceMuted;
-  const labelColor = error ? LightColors.danger : LightColors.textSecondary;
+    focused || error || showValid ? LightColors.surface : LightColors.surfaceMuted;
+  // The label stays neutral: the red border, icon and message already say
+  // which field is wrong, and a red label too reads as shouting.
+  const labelColor = LightColors.textSecondary;
 
   // Generous 2026 sizing — a 52pt field breathes and is comfortably
   // above the 44pt touch-target minimum.
@@ -180,6 +192,7 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
           fs.container,
           { borderColor, backgroundColor, minHeight: minH, paddingHorizontal: padH },
           focused && !error ? fs.focusedShadow : null,
+          error ? fs.errorGlow : null,
           multiline && [fs.multiline, { minHeight: minHMulti }],
         ]}
         onPress={() => inputRef.current?.focus()}
@@ -225,6 +238,20 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
           }}
           {...rest}
         />
+        {error ? (
+          <View style={{ marginLeft: 8 }} testID="input-error-icon">
+            <AlertCircle size={iconSize} color={LightColors.danger} strokeWidth={2} />
+          </View>
+        ) : showValid ? (
+          <View
+            style={fs.validTick}
+            accessible
+            accessibilityLabel={fieldName ? `${fieldName} looks good` : 'Looks good'}
+            testID="input-valid-tick"
+          >
+            <Check size={iconSize} color={LightColors.success} strokeWidth={2.6} />
+          </View>
+        ) : null}
         {isPassword && (
           <Pressable
             // Icon is ~18pt — 14pt of slop on every edge lifts the
@@ -271,17 +298,21 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
         )}
       </Pressable>
       {error ? (
-        <Text
-          style={fs.error}
-          // Android announces this on its own. iOS gets the explicit
-          // announceForAccessibility above — RN maps neither the live region
-          // nor role="alert" to a VoiceOver trait.
-          accessibilityLiveRegion="polite"
-          accessibilityRole="alert"
-          maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
-        >
-          {error}
-        </Text>
+        <View style={fs.errorRow}>
+          {/* Icon as well as colour, so the error doesn't rely on red alone. */}
+          <AlertCircle size={13} color={LightColors.dangerDark} strokeWidth={2.2} style={fs.errorIcon} />
+          <Text
+            style={fs.error}
+            // Android announces this on its own. iOS gets the explicit
+            // announceForAccessibility above — RN maps neither the live region
+            // nor role="alert" to a VoiceOver trait.
+            accessibilityLiveRegion="polite"
+            accessibilityRole="alert"
+            maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}
+          >
+            {error}
+          </Text>
+        </View>
       ) : helperText ? (
         <Text style={fs.helper} maxFontSizeMultiplier={CHROME_MAX_FONT_SCALE}>
           {helperText}
@@ -306,6 +337,10 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
     </View>
   );
 });
+
+// Subtle green for a field whose check passed: success at ~60% so it reads
+// as "fine" without competing with the focus blue or an error red.
+const VALID_BORDER = `${LightColors.success}99`;
 
 const fs = StyleSheet.create({
   wrapper: { marginBottom: 16 },
@@ -351,20 +386,40 @@ const fs = StyleSheet.create({
   helper: {
     fontSize: 12,
     fontFamily: 'Quicksand_400Regular',
-    color: LightColors.textTertiary,
+    // textSecondary: guidance people must read (rule 15).
+    color: LightColors.textSecondary,
     marginTop: 4,
     marginLeft: 4,
   },
+  errorRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 6,
+    marginLeft: 4,
+  },
+  errorIcon: { marginTop: 2, marginRight: 5 },
   error: {
-    fontSize: 12,
-    fontFamily: 'Quicksand_400Regular',
+    flex: 1,
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontFamily: 'Quicksand_500Medium',
     // dangerDark, not danger: #EF4444 measures ~3.8:1 on white — under the
     // 4.5:1 AA floor for 12px text. Convention: danger for fills/borders,
     // dangerDark for any danger TEXT below 17px.
     color: LightColors.dangerDark,
-    marginTop: 4,
-    marginLeft: 4,
   },
+  validTick: { marginLeft: 8 },
+  // Soft red halo around an errored field — the reference's "flagged" look.
+  errorGlow: Platform.select({
+    ios: {
+      shadowColor: LightColors.danger,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.22,
+      shadowRadius: 6,
+    },
+    android: {},
+    default: { boxShadow: `0 0 0 3px ${LightColors.danger}1F` },
+  }) as any,
   // iOS keyboard "Done" accessory bar — neutral bar, brand-blue action.
   kbdBar: {
     backgroundColor: '#F2F3F5',

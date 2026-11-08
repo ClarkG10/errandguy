@@ -42,16 +42,16 @@ const CONFIG: Record<VerificationStatus, {
     bg: 'bg-dangerSoft',
     text: 'text-dangerDark',
     color: LightColors.danger,
-    message: 'Your verification was rejected. Please review and re-submit your documents.',
-    action: 'View Details',
+    message: 'Your verification was rejected. See which document failed and upload it again.',
+    action: 'See what to fix',
   },
   resubmit: {
     icon: RefreshCw,
     bg: 'bg-dangerSoft',
     text: 'text-dangerDark',
     color: LightColors.danger,
-    message: 'Some documents need to be re-submitted. Please upload updated documents.',
-    action: 'Re-submit',
+    message: 'Some documents need uploading again before you can go online.',
+    action: 'Upload again',
   },
   approved: {
     icon: CheckCircle,
@@ -60,6 +60,12 @@ const CONFIG: Record<VerificationStatus, {
     color: LightColors.success,
     message: 'Your account is verified and approved.',
   },
+};
+
+const TITLES: Record<Exclude<VerificationStatus, 'approved'>, string> = {
+  pending: 'Verification pending',
+  rejected: 'Verification rejected',
+  resubmit: 'Documents needed again',
 };
 
 export function VerificationBanner({ status, onAction }: VerificationBannerProps) {
@@ -73,10 +79,10 @@ export function VerificationBanner({ status, onAction }: VerificationBannerProps
       <View className="flex-row items-start gap-3">
         <Icon size={20} color={config.color} />
         <View className="flex-1">
-          <Text className={`text-sm font-montserrat-bold ${config.text}`}>
-            {status === 'pending' ? 'Verification Pending' : status === 'rejected' ? 'Verification Rejected' : 'Re-submit Required'}
+          <Text className={`text-sm font-montserrat-bold ${config.text}`} accessibilityRole="header">
+            {TITLES[status]}
           </Text>
-          <Text className={`text-xs font-montserrat ${config.text} mt-1`}>
+          <Text className={`text-[13px] leading-[18px] font-montserrat ${config.text} mt-1`}>
             {config.message}
           </Text>
           {config.action && onAction && (
@@ -84,16 +90,13 @@ export function VerificationBanner({ status, onAction }: VerificationBannerProps
               onPress={onAction}
               accessibilityRole="button"
               accessibilityLabel={config.action}
-              className="mt-1"
-              // Text link alone is ~16pt tall — pad + hitSlop bring the
-              // effective target to >=44pt without changing the visual.
-              style={({ pressed }) => [
-                { minHeight: 32, justifyContent: 'center', alignSelf: 'flex-start' },
-                pressed && { opacity: 0.6 },
-              ]}
-              hitSlop={{ top: 6, bottom: 6, left: 8, right: 16 }}
+              // Static style: a function `style` on a Pressable drops its
+              // layout under NativeWind. 44pt tall on its own.
+              className="mt-1 self-start justify-center active:opacity-60"
+              style={{ minHeight: 44 }}
+              hitSlop={{ left: 8, right: 16 }}
             >
-              <Text className="text-xs font-montserrat-bold text-primary underline">
+              <Text className="text-[13px] font-montserrat-bold text-primary">
                 {config.action}
               </Text>
             </Pressable>

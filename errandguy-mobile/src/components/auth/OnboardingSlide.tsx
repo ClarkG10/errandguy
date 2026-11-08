@@ -28,6 +28,10 @@ interface OnboardingSlideProps {
    * statically visible.
    */
   active?: boolean;
+  /** The page height. A horizontal FlatList doesn't stretch its cells to
+   *  its own height everywhere (web), which left the slide content-sized and
+   *  parked the copy far above the page dots. */
+  height?: number;
 }
 
 /**
@@ -48,6 +52,7 @@ export function OnboardingSlide({
   title,
   description,
   active,
+  height,
 }: OnboardingSlideProps) {
   const { width, mScale } = useResponsive();
   const reduceMotion = useReducedMotion();
@@ -62,7 +67,7 @@ export function OnboardingSlide({
   return (
     <View
       className="flex-1 items-center justify-center px-8"
-      style={{ width }}
+      style={height ? { width, height } : { width }}
     >
       <MotiView
         from={reduceMotion ? undefined : { opacity: 0, translateY: 14 }}
@@ -75,8 +80,11 @@ export function OnboardingSlide({
           justifyContent: 'center',
         }}
       >
+        {/* Artwork and copy are ONE centred group. They used to split the
+            page 60/40, which parked the copy mid-screen with a tall empty
+            band between it and the page dots. */}
         <View
-          className="flex-[0.6] items-center justify-center w-full"
+          style={{ alignItems: 'center', justifyContent: 'center', width: '100%' }}
           // Decorative artwork — hide from screen readers so focus lands
           // straight on the title.
           accessibilityElementsHidden
@@ -92,7 +100,7 @@ export function OnboardingSlide({
             />
           ) : null}
         </View>
-        <View className="flex-[0.4] items-center px-2">
+        <View style={{ alignItems: 'center', paddingHorizontal: 8, marginTop: 28 }}>
           {eyebrow ? (
             <Text
               className="font-montserrat-bold text-primary text-center mb-2"
@@ -108,7 +116,10 @@ export function OnboardingSlide({
           >
             {title}
           </Text>
-          <Text className="text-base font-montserrat text-textSecondary text-center leading-6 max-w-[320px]">
+          <Text
+            className="font-montserrat text-textSecondary text-center"
+            style={{ fontSize: 16, lineHeight: 24, maxWidth: 330 }}
+          >
             {description}
           </Text>
         </View>

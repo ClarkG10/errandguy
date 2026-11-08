@@ -45,8 +45,10 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 // Row pressed feedback: a surfaceMuted wash reads better than scale for
 // rows inside a shared card (scale would shift the hairlines). Rows carry
 // the card's inset so the wash bleeds edge-to-edge.
-const rowPressed = ({ pressed }: { pressed: boolean }) =>
-  pressed ? { backgroundColor: LightColors.surfaceMuted } : null;
+/** Next searches when one finds nothing (pattern 6). */
+const FAQ_SUGGESTIONS = ['Payout', 'Documents', 'Rating'];
+// Pressed fill rides on className (`active:bg-surfaceMuted`): a function
+// `style` on a Pressable drops its className layout under NativeWind.
 const ROW_RIPPLE = { color: `${LightColors.primary}14` };
 
 interface FAQ {
@@ -79,7 +81,7 @@ function FaqChevron({ open, reduceMotion }: { open: boolean; reduceMotion: boole
 
   return (
     <Animated.View style={{ transform: [{ rotate }] }}>
-      <ChevronDown size={16} color={LightColors.textTertiary} strokeWidth={2} />
+      <ChevronDown size={16} color={LightColors.textSecondary} strokeWidth={2} />
     </Animated.View>
   );
 }
@@ -103,7 +105,7 @@ const runnerFaqs = (offerWindow: string): FAQ[] => [
   {
     question: 'How do I update my documents?',
     answer:
-      'Go to Profile → Documents & Verification. Upload or re-upload any required document. Our team reviews submissions within 1–2 business days.',
+      'Go to Profile → Documents & verification. Upload or re-upload any required document. Our team reviews submissions within 1–2 business days.',
   },
   {
     question: 'What if a customer cancels?',
@@ -184,12 +186,15 @@ export default function HelpScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      <GradientHeader title="Help & Support" showBack fallbackHref="/(runner)/(tabs)/profile" />
+      <GradientHeader title="Help & support" showBack fallbackHref="/(runner)/(tabs)/profile" />
 
       <ScrollView
-        className="flex-1 px-5"
+        className="flex-1"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
+          // Gutter on the content, not the ScrollView: as a className it was
+          // applied twice on web and pushed the column in to 40pt.
+          paddingHorizontal: 20,
           // Root is a plain View (GradientHeader insets only the top), so the
           // scroll floor must clear the home indicator itself — a flat 40 left
           // the last contact card grazing the gesture bar on inset devices.
@@ -205,7 +210,7 @@ export default function HelpScreen() {
 
         {/* Search — thin underline input, matching the history screen. */}
         <View className="flex-row items-center border-b border-divider pb-2 mb-3">
-          <Search size={16} color={LightColors.textMuted} strokeWidth={1.6} />
+          <Search size={16} color={LightColors.textSecondary} strokeWidth={2} />
           <TextInput
             className="flex-1 ml-2 text-[14px] font-montserrat text-textPrimary"
             placeholder="Search questions"
@@ -228,7 +233,7 @@ export default function HelpScreen() {
               accessibilityLabel="Clear search"
               className="ml-1 p-1"
             >
-              <X size={16} color={LightColors.textMuted} strokeWidth={2} />
+              <X size={16} color={LightColors.textSecondary} strokeWidth={2} />
             </Pressable>
           )}
         </View>
@@ -237,9 +242,24 @@ export default function HelpScreen() {
           {filteredFaqs.length === 0 ? (
             <View className="p-4">
               <Text className="text-sm font-montserrat text-textSecondary leading-5">
-                No questions match “{search.trim()}”. Try a different keyword or contact us
-                below.
+                No questions match “{search.trim()}”. Try one of these, or contact us below.
               </Text>
+              <View className="flex-row flex-wrap mt-3" style={{ gap: 8 }}>
+                {FAQ_SUGGESTIONS.filter(
+                  (s) => s.toLowerCase() !== search.trim().toLowerCase(),
+                ).map((s) => (
+                  <Pressable
+                    key={s}
+                    onPress={() => setSearch(s)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Search for ${s}`}
+                    className="px-4 rounded-full border border-divider bg-surface items-center justify-center active:opacity-70"
+                    style={{ minHeight: 44 }}
+                  >
+                    <Text className="text-[13px] font-montserrat-semi text-textPrimary">{s}</Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
           ) : (
             filteredFaqs.map((faq, idx) => {
@@ -251,12 +271,11 @@ export default function HelpScreen() {
                 >
                   <Pressable
                     onPress={() => toggle(faq.question)}
-                    style={rowPressed}
                     android_ripple={ROW_RIPPLE}
                     accessibilityRole="button"
                     accessibilityLabel={faq.question}
                     accessibilityState={{ expanded: isExpanded }}
-                    className="flex-row items-center justify-between p-4"
+                    className="flex-row items-center justify-between p-4 active:bg-surfaceMuted"
                   >
                     <Text className="text-[14px] font-montserrat-semi text-textPrimary flex-1 mr-3">
                       {faq.question}
@@ -289,14 +308,13 @@ export default function HelpScreen() {
               // single threaded-support surface for both roles.
               router.push('/(customer)/support');
             }}
-            style={rowPressed}
             android_ripple={ROW_RIPPLE}
             accessibilityRole="button"
             accessibilityLabel="Chat with support"
-            className="flex-row items-center gap-3 p-4 border-b border-divider"
+            className="flex-row items-center gap-3 p-4 border-b border-divider active:bg-surfaceMuted"
           >
             <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
-              <Headphones size={18} color={LightColors.primary} strokeWidth={1.8} />
+              <Headphones size={20} color={LightColors.primary} strokeWidth={1.8} />
             </View>
             <View className="flex-1">
               <Text className="text-[14px] font-montserrat-semi text-textPrimary">Support tickets</Text>
@@ -304,29 +322,28 @@ export default function HelpScreen() {
                 Open a ticket and message our team
               </Text>
             </View>
-            <ChevronRight size={16} color={LightColors.textMuted} strokeWidth={1.8} />
+            <ChevronRight size={16} color={LightColors.textSecondary} strokeWidth={1.8} />
           </Pressable>
 
           <Pressable
             onPress={() =>
               openLink('mailto:support@errandguyph.com', "Couldn't open your mail app.")
             }
-            style={rowPressed}
             android_ripple={ROW_RIPPLE}
             accessibilityRole="button"
-            accessibilityLabel="Email Support, support@errandguyph.com"
-            className="flex-row items-center gap-3 p-4"
+            accessibilityLabel="Email support, support@errandguyph.com"
+            className="flex-row items-center gap-3 p-4 active:bg-surfaceMuted"
           >
             <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center">
-              <Mail size={18} color={LightColors.primary} strokeWidth={1.8} />
+              <Mail size={20} color={LightColors.primary} strokeWidth={1.8} />
             </View>
             <View className="flex-1">
-              <Text className="text-[14px] font-montserrat-semi text-textPrimary">Email Support</Text>
+              <Text className="text-[14px] font-montserrat-semi text-textPrimary">Email support</Text>
               <Text className="text-sm font-montserrat text-textSecondary">
                 support@errandguyph.com
               </Text>
             </View>
-            <ArrowUpRight size={16} color={LightColors.textMuted} strokeWidth={1.8} />
+            <ArrowUpRight size={16} color={LightColors.textSecondary} strokeWidth={1.8} />
           </Pressable>
         </Card>
 

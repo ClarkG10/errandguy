@@ -236,14 +236,14 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
                     </View>
                   ) : (
                     <Text className="text-xs font-montserrat text-primary mt-2 text-center">
-                      Change Photo
+                      Change photo
                     </Text>
                   )}
                 </Pressable>
               </View>
 
               <Input
-                label="Full Name"
+                label="Full name"
                 value={fullName}
                 onChangeText={(v) => {
                   setFullName(v);
@@ -271,7 +271,7 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
                 textContentType="emailAddress"
               />
               <Input
-                label="Phone Number (optional)"
+                label="Phone number (optional)"
                 value={phone}
                 onChangeText={(v) => {
                   setPhone(v);
@@ -287,9 +287,10 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
 
               <View className="mt-4">
                 <Button
-                  title="Save Changes"
+                  title="Save changes"
                   onPress={handleSave}
                   disabled={!isDirty}
+                  disabledReason="Change your name, email or phone to save"
                   fullWidth
                 />
               </View>
@@ -299,7 +300,7 @@ export function EditProfileModal({ visible, onClose }: EditProfileModalProps) {
               visible={avatarPickerVisible}
               onClose={() => setAvatarPickerVisible(false)}
               onConfirm={handleAvatarUpload}
-              title="Profile Photo"
+              title="Profile photo"
               subtitle="Choose a photo for your profile"
               uploading={uploadingAvatar}
             />

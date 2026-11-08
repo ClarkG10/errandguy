@@ -74,7 +74,7 @@ const openSheet = (screen: ReturnType<typeof render>) =>
 
 /** The option rows in the sheet, by their accessibility label's first part. */
 const optionLabels = (screen: ReturnType<typeof render>) =>
-  ['ErrandGuy Wallet', 'GCash', 'Maya', 'Cash on Delivery', 'Credit / Debit Card', 'GrabPay'].filter(
+  ['ErrandGuy Wallet', 'GCash', 'Maya', 'Cash on delivery', 'Credit / Debit Card', 'GrabPay'].filter(
     (name) => screen.queryAllByLabelText(new RegExp(`^${name.replace(/[/]/g, '\\/')}\\. `)).length > 0,
   );
 
@@ -94,7 +94,7 @@ describe('PaymentMethodSelector — what it offers', () => {
     openSheet(screen);
 
     await waitFor(() =>
-      expect(optionLabels(screen)).toEqual(['ErrandGuy Wallet', 'GCash', 'Maya', 'Cash on Delivery']),
+      expect(optionLabels(screen)).toEqual(['ErrandGuy Wallet', 'GCash', 'Maya', 'Cash on delivery']),
     );
   });
 
@@ -103,19 +103,19 @@ describe('PaymentMethodSelector — what it offers', () => {
     const { screen } = renderSelector({ amount: 200 });
     openSheet(screen);
 
-    await waitFor(() => expect(optionLabels(screen)).toEqual(['GCash', 'Maya', 'Cash on Delivery']));
+    await waitFor(() => expect(optionLabels(screen)).toEqual(['GCash', 'Maya', 'Cash on delivery']));
   });
 
   it('leaves the wallet out while the balance is unknown, and when it is empty', async () => {
     const unknown = renderSelector({ amount: 0 });
     openSheet(unknown.screen);
-    expect(optionLabels(unknown.screen)).toEqual(['GCash', 'Maya', 'Cash on Delivery']);
+    expect(optionLabels(unknown.screen)).toEqual(['GCash', 'Maya', 'Cash on delivery']);
     unknown.screen.unmount();
 
     mockWallet = { balance: 0, withdrawable: 0, bonus_balance: 0 };
     const empty = renderSelector({ amount: 0 });
     openSheet(empty.screen);
-    expect(optionLabels(empty.screen)).toEqual(['GCash', 'Maya', 'Cash on Delivery']);
+    expect(optionLabels(empty.screen)).toEqual(['GCash', 'Maya', 'Cash on delivery']);
   });
 
   it('counts bonus credit toward an errand, and says it is there', async () => {
@@ -126,7 +126,7 @@ describe('PaymentMethodSelector — what it offers', () => {
 
     await waitFor(() => expect(optionLabels(screen)).toContain('ErrandGuy Wallet'));
     expect(
-      screen.getByLabelText('ErrandGuy Wallet. Balance ₱150.00 · includes ₱100.00 bonus credit'),
+      screen.getByLabelText('ErrandGuy Wallet. Paid from your balance (₱150.00) · includes ₱100.00 bonus credit'),
     ).toBeTruthy();
   });
 
@@ -136,7 +136,7 @@ describe('PaymentMethodSelector — what it offers', () => {
     const { screen } = renderSelector();
     openSheet(screen);
 
-    await waitFor(() => expect(optionLabels(screen)).toEqual(['GCash', 'Cash on Delivery']));
+    await waitFor(() => expect(optionLabels(screen)).toEqual(['GCash', 'Cash on delivery']));
   });
 
   it('never offers a card or GrabPay, even if an older server lists them', async () => {
@@ -144,7 +144,7 @@ describe('PaymentMethodSelector — what it offers', () => {
     const { screen } = renderSelector();
     openSheet(screen);
 
-    await waitFor(() => expect(optionLabels(screen)).toEqual(['GCash', 'Cash on Delivery']));
+    await waitFor(() => expect(optionLabels(screen)).toEqual(['GCash', 'Cash on delivery']));
   });
 
   it('picks a method from the sheet', async () => {
@@ -208,7 +208,7 @@ describe('PaymentMethodSelector — a pick that can no longer be used', () => {
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith('cash'));
     expect(toast.info).toHaveBeenCalledWith(
-      'Your wallet balance can’t cover this errand — switched to Cash on Delivery',
+      'Your wallet balance can’t cover this errand — switched to Cash on delivery',
     );
   });
 
@@ -218,7 +218,7 @@ describe('PaymentMethodSelector — a pick that can no longer be used', () => {
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith('cash'));
     expect(toast.info).toHaveBeenCalledWith(
-      'GCash isn’t available right now — switched to Cash on Delivery',
+      'GCash isn’t available right now — switched to Cash on delivery',
     );
   });
 });

@@ -14,7 +14,7 @@ import { ChevronLeft } from 'lucide-react-native';
 import { OTPInput } from '../../components/ui/OTPInput';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { Illustration } from '../../components/ui/Illustration';
+import { emailProblem } from '../../components/auth/fieldRules';
 import { useCountdown } from '../../hooks/useCountdown';
 import { authService } from '../../services/auth.service';
 import { userService } from '../../services/user.service';
@@ -179,7 +179,8 @@ export default function VerifyOTPScreen() {
     if (savingEmail) return;
     const parsed = emailSchema.safeParse(emailDraft);
     if (!parsed.success) {
-      setEmailError(parsed.error.issues[0]?.message ?? 'Enter a valid email address.');
+      // Say how to fix it (pattern 9), not just that it's wrong.
+      setEmailError(emailProblem(emailDraft) ?? parsed.error.issues[0]?.message ?? 'Enter a valid email address.');
       return;
     }
     const next = parsed.data;
@@ -238,7 +239,7 @@ export default function VerifyOTPScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <Pressable
-            className="mt-2 ml-6 mb-8 w-10 h-10 rounded-full items-center justify-center bg-surface border border-divider"
+            className="mt-2 ml-6 mb-6 w-10 h-10 rounded-full items-center justify-center bg-surface border border-divider"
             onPress={goBack}
             hitSlop={10}
             accessibilityRole="button"
@@ -248,17 +249,6 @@ export default function VerifyOTPScreen() {
           </Pressable>
 
           <View className="px-6">
-            <Illustration
-              name="auth-otp"
-              size={148}
-              style={{ alignSelf: 'center', marginBottom: 8 }}
-            />
-            <Text
-              className="text-[11px] font-montserrat-bold uppercase text-primary mb-3"
-              style={{ letterSpacing: 1.8 }}
-            >
-              Verification
-            </Text>
             <Text
               className="text-[28px] font-montserrat-bold text-ink"
               style={{ letterSpacing: -0.4, lineHeight: 32 }}
@@ -327,13 +317,16 @@ export default function VerifyOTPScreen() {
               success={otpSuccess}
             />
 
-            <View className="items-center mt-6 mb-6">
+            {/* Right under the code — the OTP error line above already
+                reserves its own space, so no extra margin or 44pt line-height
+                (that left a big hole between the cells and "Resend"). */}
+            <View className="items-center mb-6">
               {!isExpired && attemptsRemaining > 0 ? (
                 <Text
                   className="text-sm font-montserrat text-textSecondary"
-                  // Match the resend pressable's 44pt height so the row
-                  // doesn't shift when the countdown expires.
-                  style={{ minHeight: 44, lineHeight: 44 }}
+                  // Same 32pt row as the resend pressable so nothing shifts
+                  // when the countdown expires.
+                  style={{ minHeight: 32, lineHeight: 32 }}
                 >
                   Resend code in{' '}
                   {/* Inter tabular figures — every tick is the same width,
@@ -352,9 +345,10 @@ export default function VerifyOTPScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Resend verification code"
                   accessibilityState={{ disabled: resending, busy: resending }}
-                  hitSlop={8}
-                  className="min-h-[44px] justify-center px-4"
-                  style={{ opacity: resending ? 0.45 : 1 }}
+                  // 32pt row + 6pt slop each way = a 44pt target.
+                  hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                  className="justify-center px-4"
+                  style={{ minHeight: 32, opacity: resending ? 0.45 : 1 }}
                 >
                   {attemptsRemaining === 0 ? (
                     // Attempts exhausted — resend IS the recovery path, so
@@ -372,7 +366,7 @@ export default function VerifyOTPScreen() {
                   )}
                 </Pressable>
               )}
-              <Text className="text-xs font-montserrat text-textTertiary text-center mt-1">
+              <Text className="text-xs font-montserrat text-textSecondary text-center mt-1">
                 A new code replaces the last one. You can ask for 3 an hour.
               </Text>
             </View>
@@ -384,6 +378,11 @@ export default function VerifyOTPScreen() {
               loading={loading}
               loadingTitle="Verifying…"
               disabled={code.length !== 6 || attemptsRemaining === 0}
+              disabledReason={
+                attemptsRemaining === 0
+                  ? 'Request a new code to try again'
+                  : `Enter the 6-digit code we sent to your ${phone ? 'phone' : 'email'}`
+              }
               onPress={handleVerify}
             />
           </View>

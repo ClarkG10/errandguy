@@ -9,7 +9,7 @@ import {
   AccessibilityInfo,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CheckCircle, Repeat, Check } from 'lucide-react-native';
+import { CheckCircle, Repeat, Check, ReceiptText } from 'lucide-react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useBookingStore } from '../../../stores/bookingStore';
@@ -25,6 +25,7 @@ import { Input } from '../../../components/ui/Input';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { SuccessCheck } from '../../../components/ui/SuccessCheck';
 import { Illustration } from '../../../components/ui/Illustration';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { formatDateTime } from '../../../utils/formatDate';
 import { errorMessage } from '../../../utils/errorCatalog';
@@ -428,6 +429,13 @@ export default function RateScreen() {
               <Skeleton width={60} height={14} borderRadius={4} />
               <Skeleton width={72} height={14} borderRadius={4} />
             </View>
+            {/* Pattern 5 — and the rating below never waits on this. */}
+            <SlowNetworkNotice
+              loading
+              onRetry={fetchBooking}
+              message="Your receipt is slow to load. You can rate your runner below now."
+              style={{ marginTop: 14 }}
+            />
           </Card>
         ) : bookingState === 'error' ? (
           <Card className="mx-5 mb-6">
@@ -442,7 +450,9 @@ export default function RateScreen() {
         ) : booking ? (
           <Card className="mx-5 mb-6">
             <View className="flex-row items-center gap-2 mb-3">
-              <Illustration name="3d-receipt" size={26} />
+              {/* A line icon, like every other card header (rule 12) — not a
+                  3D render. */}
+              <ReceiptText size={20} color={LightColors.primary} strokeWidth={2} />
               <Text className="text-base font-montserrat-bold text-textPrimary">
                 Receipt
               </Text>
@@ -671,9 +681,10 @@ export default function RateScreen() {
         {/* Submit */}
         <View className="mx-5 gap-3">
           <Button
-            title="Submit Review"
+            title="Submit review"
             onPress={handleSubmit}
             disabled={rating === 0}
+            disabledReason="Tap a star to rate your runner first"
             loading={isSubmitting}
             loadingTitle="Submitting…"
             fullWidth

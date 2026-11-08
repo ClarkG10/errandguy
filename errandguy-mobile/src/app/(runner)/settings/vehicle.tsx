@@ -13,7 +13,7 @@ import { Card } from '../../../components/ui/Card';
 import { BottomActionBar } from '../../../components/ui/BottomActionBar';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ErrorState } from '../../../components/ui/ErrorState';
-import { Spinner } from '../../../components/ui/Spinner';
+import { Skeleton } from '../../../components/ui/Skeleton';
 import { Eyebrow } from '../../../components/ui/Typography';
 import { Radius } from '../../../constants/radius';
 import { useResponsive } from '../../../constants/responsive';
@@ -138,7 +138,7 @@ export default function VehicleScreen() {
     // A motorcycle/car with no plate makes no sense — surface it inline on
     // the field rather than persisting an empty plate.
     if (needsPlate(vehicleType) && !plate.trim()) {
-      setPlateError('Plate number is required');
+      setPlateError('Add your plate number, like ABC 1234.');
       return;
     }
     setPlateError(undefined);
@@ -154,7 +154,7 @@ export default function VehicleScreen() {
       const res = await runnerService.updateRunnerProfile(data);
       setRunnerProfile(res.data.data);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      toast.success('Vehicle information updated');
+      toast.success('Vehicle saved');
       leaveScreen();
     } catch (err: any) {
       toast.error(errorMessage(err, copy.runner.vehicleSaveFailed));
@@ -166,7 +166,7 @@ export default function VehicleScreen() {
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
-        title="Vehicle information"
+        title="Vehicle"
         showBack
         fallbackHref="/(runner)/(tabs)/profile"
         onBackPress={handleBackPress}
@@ -197,8 +197,16 @@ export default function VehicleScreen() {
                 style={{ flex: 0, paddingVertical: 32 }}
               />
             ) : (
-              <View className="items-center py-16" accessibilityLabel="Loading your vehicle">
-                <Spinner size="small" color={LightColors.primary} />
+              // Pattern 2 — the picker's shape while the profile loads.
+              <View accessibilityLabel="Loading your vehicle" className="mt-5">
+                <Skeleton width={120} height={12} style={{ marginBottom: 14 }} />
+                <View className="flex-row flex-wrap gap-3">
+                  {[0, 1, 2, 3].map((i) => (
+                    <View key={i} className="flex-1 min-w-[45%]">
+                      <Skeleton height={96} borderRadius={Radius.card} />
+                    </View>
+                  ))}
+                </View>
               </View>
             )
           ) : (
@@ -235,21 +243,22 @@ export default function VehicleScreen() {
                       accessibilityRole="radio"
                       accessibilityLabel={opt.label}
                       accessibilityState={{ selected }}
-                      style={({ pressed }) => [
-                        {
-                          borderRadius: Radius.card,
-                          borderWidth: 1.5,
-                          borderColor: selected ? LightColors.primary : LightColors.divider,
-                          backgroundColor: selected ? LightColors.primaryLight : LightColors.surface,
-                          overflow: 'hidden',
-                        },
-                        pressed ? { opacity: 0.92, transform: [{ scale: 0.985 }] } : null,
-                      ]}
-                      className="flex-1 min-w-[45%] p-4 items-center"
+                      // Static style (not a function): a function `style` on a
+                      // Pressable drops the border and fill under NativeWind.
+                      // Press feedback rides on className.
+                      style={{
+                        borderRadius: Radius.card,
+                        borderWidth: 1.5,
+                        borderColor: selected ? LightColors.primary : LightColors.divider,
+                        backgroundColor: selected ? LightColors.primaryLight : LightColors.surface,
+                        overflow: 'hidden',
+                        minHeight: 96,
+                      }}
+                      className="flex-1 min-w-[45%] p-4 items-center justify-center active:opacity-90"
                     >
                       <opt.Icon
-                        size={26}
-                        color={selected ? LightColors.primary : LightColors.textTertiary}
+                        size={24}
+                        color={selected ? LightColors.primary : LightColors.textSecondary}
                         strokeWidth={1.8}
                         style={{ marginBottom: 6 }}
                       />
@@ -275,7 +284,7 @@ export default function VehicleScreen() {
                   <Eyebrow className="mb-2 ml-1">Plate details</Eyebrow>
                   <Card padding="md">
                     <Input
-                      label="Plate Number *"
+                      label="Plate number"
                       value={plate}
                       onChangeText={(text) => {
                         setPlate(text);
@@ -305,6 +314,9 @@ export default function VehicleScreen() {
             loading={loading}
             loadingTitle="Saving…"
             disabled={!canSave}
+            disabledReason={
+              vehicleType == null ? 'Choose the vehicle you’ll use first.' : !dirty ? 'No changes to save yet.' : ''
+            }
             fullWidth
             size="lg"
           />

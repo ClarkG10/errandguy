@@ -13,6 +13,7 @@ import { Card } from '../../../components/ui/Card';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
 import { Illustration } from '../../../components/ui/Illustration';
 import { ErrorState } from '../../../components/ui/ErrorState';
@@ -31,6 +32,10 @@ import { HistorySkeleton } from '../../../components/ui/Skeleton';
 import type { Booking } from '../../../types';
 import { LightColors } from '../../../constants/colors';
 import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
+
+/** Next searches to offer when one finds nothing (pattern 6) — the errand
+ *  types the server matches a term against. */
+const SEARCH_SUGGESTIONS = ['Delivery', 'Buy for me', 'Queue'];
 
 export default function HistoryScreen() {
   const router = useRouter();
@@ -206,7 +211,9 @@ export default function HistoryScreen() {
               </Text>
               {/* Status chip — *Dark text on a soft wash so Completed and
                   Cancelled read as equal-weight AA chips (Badge's base
-                  tones fall under AA below 17px). */}
+                  tones fall under AA below 17px). Only on "All": under a
+                  Completed/Cancelled filter it would repeat the tab. */}
+              {statusFilter === 'all' ? (
               <View
                 className={`self-start rounded-full px-2 py-0.5 mt-1 ${
                   isCompleted ? 'bg-successSoft' : 'bg-dangerSoft'
@@ -220,15 +227,17 @@ export default function HistoryScreen() {
                   {isCompleted ? 'Completed' : 'Cancelled'}
                 </Text>
               </View>
+              ) : null}
             </View>
             <View className="items-end">
-              <Text className="text-[12px] font-montserrat text-textTertiary">
+              <Text className="text-[12px] font-montserrat tabular-nums text-textSecondary">
                 {dateStr}
               </Text>
               <Text
-                className={`text-[15px] font-inter-semi tabular-nums mt-0.5 ${
-                  isCompleted ? 'text-textPrimary' : 'text-textTertiary'
+                className={`text-[16px] font-inter-semi tabular-nums mt-0.5 ${
+                  isCompleted ? 'text-textPrimary' : 'text-textSecondary'
                 }`}
+                style={{ fontVariant: ['tabular-nums'] }}
               >
                 {/* A cancelled errand shows what it actually paid — the
                     cancellation fee, or ₱0.00 — never the payout it would
@@ -277,7 +286,7 @@ export default function HistoryScreen() {
         </Card>
       );
     },
-    [router],
+    [router, statusFilter],
   );
 
   if (initialLoading) {
@@ -295,6 +304,12 @@ export default function HistoryScreen() {
           }}
         />
         <HistorySkeleton />
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', left: 20, right: 20, bottom: TAB_CONTENT_BOTTOM_INSET }}
+        >
+          <SlowNetworkNotice loading={initialLoading} onRetry={() => page1Q.refresh()} />
+        </View>
       </View>
     );
   }
@@ -311,11 +326,15 @@ export default function HistoryScreen() {
         }}
       />
 
+      {/* The pill pads itself 10pt; nudge it so its text lines up with the
+          search field's left edge. */}
       <SyncIndicator
         syncing={page1Q.isStale}
         updatedAt={page1Q.updatedAt}
         error={!!page1Q.error}
+        offline={!!page1Q.servedFromCacheOffline}
         onRetry={page1Q.refresh}
+        style={{ marginLeft: 10 }}
       />
 
       {/* Search — thin underline input, no card */}
@@ -324,7 +343,7 @@ export default function HistoryScreen() {
           className="flex-row items-center border-b border-divider"
           style={{ minHeight: 44 }}
         >
-          <Search size={16} color={LightColors.textMuted} strokeWidth={1.6} />
+          <Search size={16} color={LightColors.textSecondary} strokeWidth={2} />
           <TextInput
             className="flex-1 ml-2 text-[14px] font-montserrat text-textPrimary"
             placeholder="Search errands"
@@ -347,7 +366,7 @@ export default function HistoryScreen() {
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               className="ml-2 p-1"
             >
-              <X size={16} color={LightColors.textMuted} strokeWidth={2} />
+              <X size={16} color={LightColors.textSecondary} strokeWidth={2} />
             </Pressable>
           ) : null}
         </View>
@@ -372,10 +391,10 @@ export default function HistoryScreen() {
               hitSlop={{ top: 12, bottom: 8, left: 6, right: 6 }}
             >
               <Text
-                className={`text-[12px] ${
+                className={`text-[13px] ${
                   active
                     ? 'font-montserrat-bold text-textPrimary'
-                    : 'font-montserrat-semi text-textMuted'
+                    : 'font-montserrat-semi text-textSecondary'
                 }`}
               >
                 {s === 'all' ? 'All' : s === 'completed' ? 'Completed' : 'Cancelled'}
@@ -412,17 +431,36 @@ export default function HistoryScreen() {
             />
           ) : searchActive ? (
             <RunnerEmptyState
-              illustration={<Illustration name="empty-search" size={168} />}
-              eyebrow="No results"
+              illustration={<Illustration name="empty-search" size={160} />}
               title={`No matches for “${debouncedSearch.trim()}”`}
-              description="Try a booking number, address, or errand type."
+              description="Search by booking number, address or errand type, or try one of these."
               actionLabel="Clear search"
               onAction={() => setSearch('')}
-            />
+            >
+              {/* Pattern 6 — a next search one tap away. */}
+              <View className="flex-row flex-wrap justify-center mt-4" style={{ gap: 8 }}>
+                {SEARCH_SUGGESTIONS.filter(
+                  (s) => s.toLowerCase() !== debouncedSearch.trim().toLowerCase(),
+                ).map((s) => (
+                  <Pressable
+                    key={s}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setSearch(s);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Search for ${s}`}
+                    className="px-4 rounded-full border border-divider bg-surface items-center justify-center active:opacity-70"
+                    style={{ minHeight: 44 }}
+                  >
+                    <Text className="text-[13px] font-montserrat-semi text-textPrimary">{s}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </RunnerEmptyState>
           ) : (
             <RunnerEmptyState
-              illustration={<Illustration name="runner-offline" size={168} />}
-              eyebrow="No history yet"
+              illustration={<Illustration name="runner-offline" size={160} />}
               title={
                 statusFilter === 'completed'
                   ? 'No completed errands yet'
@@ -435,14 +473,22 @@ export default function HistoryScreen() {
                   ? 'Jobs you cancel or that fall through will appear here.'
                   : "Once you finish a job it'll show up here with its payout."
               }
+              // One next step: back to all errands from an empty filter, or
+              // Home (where the power button is) when there are none at all.
+              actionLabel={statusFilter === 'cancelled' ? 'Show all errands' : 'Go online to get errands'}
+              onAction={() =>
+                statusFilter === 'cancelled'
+                  ? setStatusFilter('all')
+                  : router.push('/(runner)/(tabs)' as any)
+              }
             />
           )
         }
         ListFooterComponent={
           loadingMore ? (
             <View className="py-4 items-center justify-center">
-              <Text className="text-[11px] font-montserrat text-textTertiary">
-                Loading…
+              <Text className="text-[12px] font-montserrat text-textSecondary">
+                Loading more errands…
               </Text>
             </View>
           ) : loadMoreFailed ? (
@@ -456,8 +502,8 @@ export default function HistoryScreen() {
               className="mx-5 my-2 py-3 rounded-2xl border border-divider bg-surface flex-row items-center justify-center"
               style={{ minHeight: 44 }}
             >
-              <RefreshCw size={14} color={LightColors.primary} strokeWidth={2} />
-              <Text className="text-[12px] font-montserrat-bold text-primary ml-2">
+              <RefreshCw size={16} color={LightColors.primary} strokeWidth={2} />
+              <Text className="text-[13px] font-montserrat-bold text-primary ml-2">
                 Couldn&apos;t load more · Tap to retry
               </Text>
             </Pressable>
@@ -465,7 +511,7 @@ export default function HistoryScreen() {
             // End-of-list affordance (mirrors the notifications inbox) so a
             // fully-loaded history reads as finished, not mid-load.
             <View className="py-4 items-center">
-              <Text className="text-[11px] font-montserrat text-textTertiary">
+              <Text className="text-[12px] font-montserrat text-textSecondary">
                 That&apos;s all your errands
               </Text>
             </View>

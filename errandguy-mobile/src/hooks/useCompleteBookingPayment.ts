@@ -21,7 +21,7 @@ export { CHECKOUT_CANCELLED };
  *  real: the waiting screen and the errand both carry a "Complete payment"
  *  button that reopens the same checkout. */
 export const CHECKOUT_CANCELLED_MESSAGE =
-  `We haven't received your payment yet, so no runner has been sent. Resume the payment now, or close this and tap Complete payment — an errand left unpaid for ${UNPAID_CHECKOUT_WINDOW_MINUTES} minutes is cancelled. If you already paid, this updates by itself.`;
+  `We haven't received your payment yet, so no runner has been sent. Resume the payment now, or close this and tap Pay — an errand left unpaid for ${UNPAID_CHECKOUT_WINDOW_MINUTES} minutes is cancelled. If you already paid, this updates by itself.`;
 
 /**
  * The customer closed the GCash/Maya sheet. That alone doesn't mean unpaid —

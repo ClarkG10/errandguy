@@ -25,6 +25,13 @@ import {
 } from '../../../components/customer/VehicleTypeSelector';
 import { PaymentMethodSelector } from '../../../components/customer/PaymentMethodSelector';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
+import {
+  SummaryRow,
+  SUMMARY_MARKER_WIDTH,
+} from '../../../components/customer/booking/SummaryRow';
+import { BookingSectionHeader } from '../../../components/customer/booking/BookingSectionHeader';
+import { Skeleton } from '../../../components/ui/Skeleton';
+import { Spinner } from '../../../components/ui/Spinner';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { serializeChecklist } from '../../../utils/shoppingChecklist';
 import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../../../utils/browser';
@@ -129,6 +136,30 @@ interface EstimateResult {
 // renders its stage label visually only, so without this a blind customer taps
 // "Confirm & pay" and hears nothing until navigation lands. Mirrors the
 // STATE_ANNOUNCEMENTS pattern in book/confirm.tsx.
+const TABULAR = { fontVariant: ['tabular-nums' as const] };
+
+/** After this long without a fare, the estimate says it's on a slow connection. */
+const SLOW_ESTIMATE_MS = 4000;
+
+/** A stop on the route read-back: pickup (primary) or a destination (danger). */
+function RouteDot({ color }: { color: string }) {
+  return <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color }} />;
+}
+
+/** The dotted line joining two route dots (centred under the 10pt dot). */
+function RouteConnector() {
+  return (
+    <View style={{ marginLeft: 3.5, gap: 3, marginVertical: -4 }} importantForAccessibility="no">
+      {[0, 1, 2].map((i) => (
+        <View
+          key={i}
+          style={{ width: 3, height: 3, borderRadius: 1.5, backgroundColor: LightColors.dividerStrong }}
+        />
+      ))}
+    </View>
+  );
+}
+
 const BOOKING_STAGE_ANNOUNCEMENTS: Record<BookingStage, string> = {
   checking: 'Confirming your details.',
   creating: 'Booking your errand. This can take a few seconds.',
@@ -266,6 +297,18 @@ export default function ReviewScreen() {
   const rerunEstimate = useCallback(() => {
     setEstimateAttempt((n) => n + 1);
   }, []);
+
+  // Slow network: the fare request has been out for a while. Drives a plain
+  // "still working" line under the skeleton; resets with every new request.
+  const [estimateSlow, setEstimateSlow] = useState(false);
+  useEffect(() => {
+    if (!isEstimateLoading) {
+      setEstimateSlow(false);
+      return;
+    }
+    const t = setTimeout(() => setEstimateSlow(true), SLOW_ESTIMATE_MS);
+    return () => clearTimeout(t);
+  }, [isEstimateLoading, estimateAttempt]);
 
   // Fetch estimate on mount — guarded against a stale-response race when
   // the user navigates back/forward quickly (the previous version could
@@ -901,20 +944,13 @@ export default function ReviewScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      <GradientHeader title="Review & confirm" showBack fallbackHref="/(customer)/(tabs)">
-        <View className="px-5 -mt-2 pb-3">
-          <Text
-            className="text-[10px] font-montserrat-bold uppercase"
-            style={{ letterSpacing: 1.4, color: LightColors.textSecondary }}
-          >
-            New errand · Step 3
-          </Text>
-        </View>
-      </GradientHeader>
+      {/* Title only — the step indicator below already says "Review", so
+          no "New errand · Step 3" eyebrow repeating it. */}
+      <GradientHeader title="Review & confirm" showBack fallbackHref="/(customer)/(tabs)" />
 
       {/* Step indicator — clamped to the same content column as the
           scroll body so tablet edges align (mirrors type.tsx). */}
-      <View className="px-5 mt-3 pb-3">
+      <View className="px-5 mt-1 pb-3">
         <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
           <BookingStepIndicator currentStep={2} />
         </View>
@@ -926,6 +962,7 @@ export default function ReviewScreen() {
           maxWidth: contentMaxWidth,
           width: '100%',
           alignSelf: 'center',
+          paddingTop: 4,
           // Clearance for the sticky BottomActionBar: its real height is
           // 16 top pad + button + max(inset, 12) bottom pad, so a fixed
           // spacer under-clears on home-indicator / 3-button-nav devices.
@@ -933,169 +970,75 @@ export default function ReviewScreen() {
         }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Route Summary — typographic, ride-hailing-style two-line
-            stack with a connecting hairline. No icon-tile chips. Rows are
-            tappable edit affordances back to the details step — fixing a
-            wrong address here beats abandoning the funnel. */}
-        <View className="mb-5 py-3 border-y border-divider">
-          <Pressable
-            className="flex-row items-center mb-2.5"
-            accessibilityRole="button"
-            accessibilityLabel={`Pickup: ${draftBooking.pickup_address ?? 'not set'}. Edit`}
-            hitSlop={8}
-            style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
-            onPress={() => editStep('/(customer)/book/details')}
-          >
-            <View
-              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: LightColors.primary }}
-            />
-            <View className="flex-1 ml-3">
-              <Text
-                className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
-                style={{ letterSpacing: 1.4 }}
-              >
-                Pickup
-              </Text>
-              <Text className="text-[14px] font-montserrat-semi text-textPrimary" numberOfLines={1}>
-                {draftBooking.pickup_address ?? 'Pickup location'}
-              </Text>
-            </View>
-            <Text className="text-[13px] font-montserrat-semi text-primary ml-3">
-              Edit
-            </Text>
-          </Pressable>
-          <View
-            style={{
-              marginLeft: 3,
-              width: 2,
-              height: 12,
-              backgroundColor: LightColors.divider,
-            }}
-          />
-          <Pressable
-            className="flex-row items-center mt-2.5"
-            accessibilityRole="button"
-            accessibilityLabel={`Drop-off: ${draftBooking.dropoff_address ?? 'not set'}. Edit`}
-            hitSlop={8}
-            style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
-            onPress={() => editStep('/(customer)/book/details')}
-          >
-            {/* Danger circle — the funnel's learned drop-off cue from the
+        {/* ── Where ── Route read-back, ride-hailing style: a dot per stop
+            on one connecting line. Every row is an edit affordance back to
+            the details step (fixing an address here beats abandoning the
+            funnel), and every "Edit" sits in the same right-hand column. */}
+        <SummaryRow
+          label={rule.pickupLabel}
+          value={draftBooking.pickup_address ?? `${rule.pickupLabel} not set`}
+          marker={<RouteDot color={LightColors.primary} />}
+          action="Edit"
+          accessibilityLabel={`${rule.pickupLabel}: ${draftBooking.pickup_address ?? 'not set'}. Edit`}
+          onPress={() => editStep('/(customer)/book/details')}
+        />
+        {(!rule.singleLocation || !!draftBooking.dropoff_address) && (
+          <>
+            <RouteConnector />
+            {/* Danger dot — the funnel's learned drop-off cue from the
                 details map (pin, marker, route bead all danger red). */}
-            <View
-              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: LightColors.danger }}
+            <SummaryRow
+              label={rule.dropoffLabel}
+              value={draftBooking.dropoff_address ?? `${rule.dropoffLabel} not set`}
+              marker={<RouteDot color={LightColors.danger} />}
+              action="Edit"
+              accessibilityLabel={`${rule.dropoffLabel}: ${draftBooking.dropoff_address ?? 'not set'}. Edit`}
+              onPress={() => editStep('/(customer)/book/details')}
             />
-            <View className="flex-1 ml-3">
-              <Text
-                className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
-                style={{ letterSpacing: 1.4 }}
-              >
-                Drop-off
-              </Text>
-              <Text className="text-[14px] font-montserrat-semi text-textPrimary" numberOfLines={1}>
-                {draftBooking.dropoff_address ?? 'Drop-off location'}
-              </Text>
-            </View>
-            <Text className="text-[13px] font-montserrat-semi text-primary ml-3">
-              Edit
-            </Text>
-          </Pressable>
-
-          {/* Extra stops (multi-stop) — continue the route after the drop-off,
-              same danger bead as the drop-off since they're all destinations. */}
-          {(draftBooking.stops ?? []).map((stop, i) => (
-            <View key={`${stop.lat},${stop.lng},${i}`}>
-              <View
-                style={{ marginLeft: 3, width: 2, height: 12, backgroundColor: LightColors.divider }}
-              />
-              <Pressable
-                className="flex-row items-center mt-2.5"
-                accessibilityRole="button"
-                accessibilityLabel={`Stop ${i + 1}: ${stop.address}. Edit`}
-                hitSlop={8}
-                style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
-                onPress={() => editStep('/(customer)/book/details')}
-              >
-                <View
-                  style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: LightColors.danger }}
-                />
-                <View className="flex-1 ml-3">
-                  <Text
-                    className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
-                    style={{ letterSpacing: 1.4 }}
-                  >
-                    Stop {i + 1}
-                  </Text>
-                  <Text className="text-[14px] font-montserrat-semi text-textPrimary" numberOfLines={1}>
-                    {stop.address}
-                  </Text>
-                </View>
-                <Text className="text-[13px] font-montserrat-semi text-primary ml-3">
-                  Edit
-                </Text>
-              </Pressable>
-            </View>
-          ))}
-        </View>
-
-        {/* What's being booked — type, timing, list size. */}
-        <View className="mb-5 rounded-2xl border border-divider bg-surface px-4">
-          <View className="flex-row items-center justify-between py-3">
-            <Text className="text-[12px] font-montserrat text-textSecondary">
-              Errand
-            </Text>
-            <Text className="text-[13px] font-montserrat-semi text-textPrimary ml-3 flex-shrink" numberOfLines={1}>
-              {errandTypeLabel}
-            </Text>
+          </>
+        )}
+        {/* Extra stops (multi-stop) continue the route after the drop-off,
+            with the same destination dot. */}
+        {(draftBooking.stops ?? []).map((stop, i) => (
+          <View key={`${stop.lat},${stop.lng},${i}`}>
+            <RouteConnector />
+            <SummaryRow
+              label={`Stop ${i + 1}`}
+              value={stop.address}
+              marker={<RouteDot color={LightColors.danger} />}
+              action="Edit"
+              accessibilityLabel={`Stop ${i + 1}: ${stop.address}. Edit`}
+              onPress={() => editStep('/(customer)/book/details')}
+            />
           </View>
-          <Pressable
-            className="flex-row items-center justify-between py-3 border-t border-divider"
-            accessibilityRole="button"
-            accessibilityLabel={`Schedule: ${scheduleLabel}. ${scheduleAction}`}
-            hitSlop={8}
-            style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
-            onPress={() =>
-              // "Schedule for later" opens the picker already on "Later".
-              editStep(isScheduled || needsScheduleTime ? '/(customer)/book/schedule' : '/(customer)/book/schedule?later=1')
-            }
-          >
-            <Text className="text-[12px] font-montserrat text-textSecondary">
-              Schedule
-            </Text>
-            <View className="flex-row items-center ml-3 flex-shrink">
-              <Text className="text-[13px] font-montserrat-semi text-textPrimary flex-shrink" numberOfLines={1}>
-                {scheduleLabel}
-              </Text>
-              <Text className="text-[13px] font-montserrat-semi text-primary ml-3">
-                {scheduleAction}
-              </Text>
-            </View>
-          </Pressable>
-          {rule.requiresShoppingBudget && (
-            <View className="flex-row items-center justify-between py-3 border-t border-divider">
-              <Text className="text-[12px] font-montserrat text-textSecondary">
-                Shopping list
-              </Text>
-              <Text className="text-[13px] font-montserrat-semi text-textPrimary ml-3">
-                {shoppingItemCount} {shoppingItemCount === 1 ? 'item' : 'items'}
-              </Text>
-            </View>
-          )}
-        </View>
+        ))}
 
-        {/* Distance & Time — inline typographic stat row, no chips. */}
+        {/* Trip facts — distance and the chosen vehicle's travel time. */}
         {estimate?.distance_km != null && (
-          <View className="flex-row items-center mb-5" style={{ gap: 16 }}>
+          <View
+            className="flex-row items-center mt-1"
+            style={{ marginLeft: SUMMARY_MARKER_WIDTH, gap: 16 }}
+            accessible
+            accessibilityLabel={`${Number(estimate.distance_km).toFixed(1)} kilometres${
+              getEstimatedTime() ? `, about ${getEstimatedTime()}` : ''
+            }`}
+          >
             <View className="flex-row items-center">
-              <Route size={13} color={LightColors.textTertiary} strokeWidth={2} />
-              <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1.5">
+              <Route size={14} color={LightColors.textTertiary} strokeWidth={2} />
+              <Text
+                className="text-[13px] font-montserrat text-textSecondary ml-1.5"
+                style={TABULAR}
+              >
                 {Number(estimate.distance_km).toFixed(1)} km
               </Text>
             </View>
             {getEstimatedTime() && (
               <View className="flex-row items-center">
-                <Clock size={13} color={LightColors.textTertiary} strokeWidth={2} />
-                <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1.5">
+                <Clock size={14} color={LightColors.textTertiary} strokeWidth={2} />
+                <Text
+                  className="text-[13px] font-montserrat text-textSecondary ml-1.5"
+                  style={TABULAR}
+                >
                   ~{getEstimatedTime()}
                 </Text>
               </View>
@@ -1103,87 +1046,115 @@ export default function ReviewScreen() {
           </View>
         )}
 
+        {/* ── What & when ── same row pattern, separated from the route by
+            a hairline rather than boxed into a card of its own. */}
+        <View className="border-t border-divider mt-4 pt-1">
+          <SummaryRow
+            label="Errand"
+            value={errandTypeLabel}
+            valueLines={1}
+          />
+          <SummaryRow
+            label="When"
+            value={scheduleLabel}
+            valueLines={1}
+            action={scheduleAction}
+            accessibilityLabel={`Schedule: ${scheduleLabel}. ${scheduleAction}`}
+            onPress={() =>
+              // "Schedule for later" opens the picker already on "Later".
+              editStep(isScheduled || needsScheduleTime ? '/(customer)/book/schedule' : '/(customer)/book/schedule?later=1')
+            }
+          />
+          {rule.requiresShoppingBudget && (
+            <SummaryRow
+              label="Shopping list"
+              value={`${shoppingItemCount} ${shoppingItemCount === 1 ? 'item' : 'items'}`}
+              valueLines={1}
+              action="Edit"
+              onPress={() => editStep('/(customer)/book/details')}
+            />
+          )}
+        </View>
+
         {/* Single-location errands (queue) have no travel distance, so
             vehicle pricing is identical for every option. Hide the selector
             to avoid the confusing "all vehicles cost the same" UX. */}
         {!rule.singleLocation && vehicleOptions.length > 1 && (
-          <VehicleTypeSelector
-            options={vehicleOptions}
-            selectedKey={vehicleType}
-            onSelect={(key) => {
-              setVehicleType(key);
-              updateDraft({ vehicle_type_rate: key });
-            }}
-          />
-        )}
-
-        {currentVehicleEstimate ? (
-          <View className="mb-4">
-            <PriceBreakdown
-              items={priceItems}
-              total={totalAmount}
+          <View className="mt-7">
+            <VehicleTypeSelector
+              options={vehicleOptions}
+              selectedKey={vehicleType}
+              onSelect={(key) => {
+                setVehicleType(key);
+                updateDraft({ vehicle_type_rate: key });
+              }}
             />
           </View>
-        ) : estimateError ? (
-          /* Estimate failed — inline recovery in place of the
-             skeleton so the user is never stuck on a dead
-             "Calculating fare…" with no way forward. */
-          <View className="mb-4">
+        )}
+
+        {/* ── Fare ── the total is the dominant figure on the screen. */}
+        <View className="mt-7">
+          <BookingSectionHeader title="Fare" />
+          {currentVehicleEstimate ? (
+            <PriceBreakdown items={priceItems} total={totalAmount} />
+          ) : estimateError ? (
+            /* Estimate failed — inline recovery in place of the
+               skeleton so the user is never stuck on a dead
+               "Calculating fare…" with no way forward. */
             <ErrorState
               compact
               title="Couldn't calculate your fare"
               error={estimateError}
               onRetry={rerunEstimate}
             />
-          </View>
-        ) : noVehicleOffered ? (
-          /* The fare came back, but no vehicle is on offer for this errand
-             type right now (staff switched them off): say so, with a retry,
-             instead of the "Calculating fare…" skeleton forever. */
-          <View className="mb-4">
+          ) : noVehicleOffered ? (
+            /* The fare came back, but no vehicle is on offer for this errand
+               type right now (staff switched them off): say so, with a retry,
+               instead of the "Calculating fare…" skeleton forever. */
             <ErrorState
               compact
               title="No vehicle is available for this errand right now"
               description="Try again in a little while, or choose another errand type."
               onRetry={rerunEstimate}
             />
-          </View>
-        ) : (
-          /* Estimate skeleton — mirrors the real PriceBreakdown's
-             metrics (4 fee rows @ ~33pt, total row @ ~40pt) so the
-             sections below don't reflow when the data arrives. */
-          <View className="mb-4" accessibilityLabel="Calculating fare">
-            {Array.from({ length: 4 }).map((_, i) => (
+          ) : (
+            /* Estimate skeleton — mirrors the real PriceBreakdown's
+               metrics (three fee rows @ ~29pt, the total row @ ~44pt) so
+               the sections below don't reflow when the data arrives. */
+            <View accessibilityLabel="Calculating fare">
+              {[96, 112, 128].map((w, i) => (
+                <View
+                  key={`pb-skel-${i}`}
+                  className="flex-row items-center justify-between"
+                  style={{ height: 29 }}
+                >
+                  <Skeleton width={w} height={12} borderRadius={6} />
+                  <Skeleton width={56} height={12} borderRadius={6} />
+                </View>
+              ))}
               <View
-                key={`pb-skel-${i}`}
-                className="flex-row items-center justify-between"
-                style={{ height: 33 }}
+                className="border-t border-divider mt-2 pt-3 flex-row items-center justify-between"
+                style={{ height: 46 }}
               >
-                <View
-                  className="h-3 rounded-full bg-divider"
-                  style={{ width: 90, opacity: 0.6 }}
-                />
-                <View
-                  className="h-3 rounded-full bg-divider"
-                  style={{ width: 60, opacity: 0.6 }}
-                />
+                <Skeleton width={44} height={14} borderRadius={7} />
+                <Skeleton width={104} height={22} borderRadius={8} />
               </View>
-            ))}
-            <View
-              className="border-t border-divider mt-1 pt-3 flex-row items-center justify-between"
-              style={{ height: 40 }}
-            >
-              <View
-                className="h-4 rounded-full bg-divider"
-                style={{ width: 50, opacity: 0.7 }}
-              />
-              <View
-                className="h-4 rounded-full bg-divider"
-                style={{ width: 80, opacity: 0.7 }}
-              />
+              {/* Slow network: after ~4s say so plainly, instead of a
+                  skeleton that looks the same at 2s and at 20s. The request
+                  is still running (a slow one fails into the retry card
+                  above on its own timeout), so there's nothing to re-send
+                  yet — just honest progress. */}
+              {estimateSlow && (
+                <View className="flex-row items-center mt-3" accessibilityLiveRegion="polite">
+                  <Spinner size="small" color={LightColors.primary} />
+                  <Text className="text-[13px] font-montserrat text-textSecondary ml-2 flex-1">
+                    Still working — slow connection. Your fare shows here as soon as it arrives.
+                  </Text>
+                </View>
+              )}
             </View>
-          </View>
-        )}
+          )}
+        </View>
 
         {/* Item money — never part of the Total above and never charged
             online: the runner pays at the store and the customer repays the
@@ -1192,12 +1163,12 @@ export default function ReviewScreen() {
             covers the items too. Typographic row (not a card) so its amount
             sits in the same money column as the PriceBreakdown lines above. */}
         {rule.requiresShoppingBudget && (draftBooking.shopping_budget ?? 0) > 0 && (
-          <View className="mb-4 flex-row items-start justify-between">
+          <View className="mt-4 flex-row items-start justify-between">
             <View className="flex-1 pr-3">
               <Text className="text-sm font-montserrat text-textSecondary">
                 Items, paid in cash at the door
               </Text>
-              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+              <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5">
                 Your runner pays for the items. You repay the receipt amount in
                 cash when they arrive — never more than your budget, and not
                 part of the total above.
@@ -1205,14 +1176,15 @@ export default function ReviewScreen() {
             </View>
             <Text
               className="text-sm font-inter text-textPrimary"
-              style={{ fontVariant: ['tabular-nums'] }}
+              style={TABULAR}
             >
               up to {formatCurrency(draftBooking.shopping_budget!)}
             </Text>
           </View>
         )}
 
-        {/* Payment Method */}
+        {/* ── Payment ── */}
+        <View className="mt-7">
         <PaymentMethodSelector
           selected={draftBooking.payment_method}
           // The booking charges `totalAmount` up front, so the wallet is only
@@ -1220,7 +1192,7 @@ export default function ReviewScreen() {
           amount={totalAmount}
           onSelect={(type) => updateDraft({ payment_method: type })}
         />
-
+        </View>
       </ScrollView>
 
       {/* Bottom CTA — clamped to the content column on tablets. */}

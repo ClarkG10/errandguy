@@ -36,7 +36,7 @@ const roles: RoleOption[] = [
   {
     role: 'runner',
     icon: Bike,
-    title: 'Errand Runner',
+    title: 'Errand runner',
     subtitle: 'I want to earn money',
     features: ['Accept errands nearby', 'Earn on your schedule', 'Payouts to GCash, Maya or bank'],
   },
@@ -74,7 +74,10 @@ export default function RoleSelectScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background px-6">
+    // Side padding lives on the scroll content and the footer, not here:
+    // SafeAreaView writes its own (zero) side insets as padding, which wiped a
+    // className px-6 and ran the cards and the Continue button edge to edge.
+    <SafeAreaView className="flex-1 bg-background">
       <ScrollView
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -82,6 +85,7 @@ export default function RoleSelectScreen() {
           flexGrow: 1,
           justifyContent: 'center',
           paddingBottom: 16,
+          paddingHorizontal: 24,
           width: '100%',
           maxWidth: contentMaxWidth,
           alignSelf: 'center',
@@ -164,8 +168,8 @@ export default function RoleSelectScreen() {
                   {/* Icon chip — primaryLight circle with a primary icon. */}
                   <View style={[s.iconChip, isSelected && s.iconChipSelected]}>
                     <Icon
-                      size={22}
-                      color={isSelected ? LightColors.primary : LightColors.textTertiary}
+                      size={24}
+                      color={isSelected ? LightColors.primary : LightColors.textSecondary}
                     />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -184,9 +188,9 @@ export default function RoleSelectScreen() {
                   {item.features.map((f) => (
                     <View key={f} style={s.featureRow}>
                       <Check
-                        size={13}
+                        size={16}
                         color={LightColors.primary}
-                        strokeWidth={2.5}
+                        strokeWidth={2.4}
                       />
                       <Text className="text-[13px] font-montserrat text-textSecondary">
                         {f}
@@ -203,6 +207,7 @@ export default function RoleSelectScreen() {
       <View
         style={{
           paddingBottom: 24,
+          paddingHorizontal: 24,
           width: '100%',
           maxWidth: contentMaxWidth,
           alignSelf: 'center',
@@ -215,6 +220,7 @@ export default function RoleSelectScreen() {
           loading={loading}
           loadingTitle="Setting up…"
           disabled={!selectedRole}
+          disabledReason="Pick how you'll use ErrandGuy to continue"
           onPress={handleContinue}
         />
       </View>

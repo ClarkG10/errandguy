@@ -7,7 +7,7 @@ export default function RunnerAppearanceScreen() {
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
-        title="Appearance & Accessibility"
+        title="Appearance & accessibility"
         showBack
         fallbackHref="/(runner)/(tabs)/profile"
       />

@@ -184,6 +184,8 @@ export default function PreferredTypesScreen() {
     );
   }, [options, sourceTypes, initialSet]);
 
+  const noneSelected = sourceTypes.length > 0 && selectedCount === 0;
+
   // Loading / error surfaces mirror the customer booking picker: show
   // skeletons on a cold load, an inline ErrorState (with retry) when the
   // fetch fails with nothing cached, and an EmptyState if config returns
@@ -234,16 +236,21 @@ export default function PreferredTypesScreen() {
             className="text-xs font-montserrat text-textSecondary"
             accessibilityLiveRegion="polite"
           >
-            {selectedCount} selected • min 1 required
+            {sourceTypes.length > 0
+              ? `${selectedCount} of ${sourceTypes.length} selected`
+              : `${selectedCount} selected`}
           </Text>
         </View>
       </GradientHeader>
 
       <ScrollView
-        className="flex-1 px-5"
+        className="flex-1"
         showsVerticalScrollIndicator={false}
         refreshControl={<BrandRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{
+          // Gutter on the content, not the ScrollView: as a className it was
+          // applied twice on web and pushed the column in to 40pt.
+          paddingHorizontal: 20,
           paddingBottom: 120,
           maxWidth: contentMaxWidth,
           width: '100%',
@@ -251,7 +258,8 @@ export default function PreferredTypesScreen() {
         }}
       >
         <Text className="text-sm font-montserrat text-textSecondary mb-3">
-          Select the errand types you want to receive requests for.
+          Choose the errand types you want offers for. Ticking them all means you get every
+          type.
         </Text>
 
         {showSkeletons ? (
@@ -282,7 +290,13 @@ export default function PreferredTypesScreen() {
               accessibilityLabel={type.name}
               accessibilityState={{ checked: type.selected }}
             >
-              <Card className={`mb-2 p-4 flex-row items-center justify-between border ${type.selected ? 'border-primary bg-primaryLight' : 'border-transparent'}`}>
+              {/* Selected fill on the style — Card's own bg-surface class beat
+                  an added bg-primaryLight, so only the border showed it. */}
+              <Card
+                padding="none"
+                className={`mb-2 p-4 flex-row items-center justify-between border ${type.selected ? 'border-primary' : 'border-transparent'}`}
+                style={type.selected ? { backgroundColor: LightColors.primaryLight } : undefined}
+              >
                 <Text
                   className="text-[14px] font-montserrat-semi text-textPrimary flex-1 mr-3"
                   numberOfLines={2}
@@ -305,7 +319,18 @@ export default function PreferredTypesScreen() {
       {/* Save Button — disabled until the selection actually changes so an
           untouched form doesn't fire a redundant profile write. */}
       <BottomActionBar>
-        <Button title="Save preferences" onPress={handleSave} disabled={!dirty} fullWidth />
+        {/* Pattern 9 — none ticked is the one invalid state; say so under
+            the button instead of a toast after the tap. */}
+        <Button
+          title="Save preferences"
+          onPress={handleSave}
+          disabled={!dirty || noneSelected}
+          disabledReason={
+            noneSelected ? 'Pick at least one errand type to save.' : !dirty ? 'No changes to save yet.' : ''
+          }
+          fullWidth
+          size="lg"
+        />
       </BottomActionBar>
 
       <ConfirmModal

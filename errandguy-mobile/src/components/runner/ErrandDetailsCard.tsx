@@ -217,16 +217,17 @@ export function ErrandDetailsCard({
         onPress={() => setExpanded(!expanded)}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
+        accessibilityLabel={expanded ? 'Hide errand details' : 'Show errand details'}
         hitSlop={8}
         className="flex-row items-center justify-between py-2"
       >
         <Text className="text-sm font-montserrat-bold text-textPrimary">
-          Errand Details
+          Errand details
         </Text>
         {expanded ? (
-          <ChevronUp size={18} color={LightColors.textTertiary} />
+          <ChevronUp size={20} color={LightColors.textSecondary} />
         ) : (
-          <ChevronDown size={18} color={LightColors.textTertiary} />
+          <ChevronDown size={20} color={LightColors.textSecondary} />
         )}
       </Pressable>
 
@@ -239,7 +240,10 @@ export function ErrandDetailsCard({
                 <Text className="text-xs font-montserrat-bold text-textSecondary">
                   Shopping list
                 </Text>
-                <Text className="text-xs font-montserrat-bold text-primary">
+                <Text
+                  className="text-xs font-montserrat-bold text-primary"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   Picked {serverPickedCount}/{serverItems.length}
                 </Text>
               </View>
@@ -286,7 +290,10 @@ export function ErrandDetailsCard({
                     >
                       {item.name}
                     </Text>
-                    <Text className="text-sm font-montserrat-bold text-textSecondary ml-2">
+                    <Text
+                      className="text-sm font-montserrat-bold text-textSecondary ml-2"
+                      style={{ fontVariant: ['tabular-nums'] }}
+                    >
                       ×{item.qty}
                     </Text>
                   </Pressable>
@@ -300,7 +307,10 @@ export function ErrandDetailsCard({
                 <Text className="text-xs font-montserrat-bold text-textSecondary">
                   Shopping list
                 </Text>
-                <Text className="text-xs font-montserrat-bold text-primary">
+                <Text
+                  className="text-xs font-montserrat-bold text-primary"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   Picked {pickedCount}/{checklist.items.length}
                 </Text>
               </View>
@@ -347,7 +357,10 @@ export function ErrandDetailsCard({
                     >
                       {item.name}
                     </Text>
-                    <Text className="text-sm font-montserrat-bold text-textSecondary ml-2">
+                    <Text
+                      className="text-sm font-montserrat-bold text-textSecondary ml-2"
+                      style={{ fontVariant: ['tabular-nums'] }}
+                    >
                       ×{item.qty}
                     </Text>
                   </Pressable>
@@ -381,7 +394,7 @@ export function ErrandDetailsCard({
           {specialInstructions && (
             <View className="mb-2">
               <Text className="text-xs font-montserrat-bold text-textSecondary mb-1">
-                Special Instructions
+                Special instructions
               </Text>
               <Text className="text-sm font-montserrat text-textPrimary">
                 {specialInstructions}
@@ -392,7 +405,7 @@ export function ErrandDetailsCard({
           {estimatedItemValue != null && estimatedItemValue > 0 && (
             <View className="mb-2">
               <Text className="text-xs font-montserrat-bold text-textSecondary mb-1">
-                Estimated Item Value
+                Estimated item value
               </Text>
               <Text
                 className="text-sm font-inter-semi text-textPrimary"
@@ -406,7 +419,7 @@ export function ErrandDetailsCard({
           {itemPhotos && itemPhotos.length > 0 && (
             <View>
               <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
-                Item Photos
+                Item photos
               </Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {itemPhotos.map((photo, i) => {

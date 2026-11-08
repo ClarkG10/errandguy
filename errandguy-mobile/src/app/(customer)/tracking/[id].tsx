@@ -20,6 +20,7 @@ import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
+  AlertTriangle,
   ArrowLeft,
   Banknote,
   MessageCircle,
@@ -91,9 +92,9 @@ import { useEta } from '../../../hooks/useEta';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
 import { useCompleteBookingPayment } from '../../../hooks/useCompleteBookingPayment';
 import { TrackingSkeleton } from '../../../components/ui/Skeleton';
+import { SlowNetworkNotice, useSlowLoading } from '../../../components/ui/SlowNetworkNotice';
 import { Avatar } from '../../../components/ui/Avatar';
 import { RatingStars } from '../../../components/ui/RatingStars';
-import { StatusTimeline } from '../../../components/ui/StatusTimeline';
 import { JourneyBeads } from '../../../components/ui/JourneyBeads';
 import { Button } from '../../../components/ui/Button';
 import { Illustration } from '../../../components/ui/Illustration';
@@ -101,11 +102,15 @@ import { ErrorState } from '../../../components/ui/ErrorState';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ExpandableSheet } from '../../../components/ui/ExpandableSheet';
 import { PaymentProgress } from '../../../components/ui/PaymentProgress';
-import { formatTime } from '../../../utils/formatDate';
+import { formatMonthDayTime, formatTime } from '../../../utils/formatDate';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { mediaSource } from '../../../utils/mediaSource';
 import { ImageLightbox } from '../../../components/ui/ImageLightbox';
 import { ShoppingProgressCard } from '../../../components/customer/ShoppingProgressCard';
+import {
+  awaitingPaymentHeadline,
+  payNowLabel,
+} from '../../../components/customer/home/awaitingPayment';
 import { StopsProgressCard } from '../../../components/customer/StopsProgressCard';
 // The receipt and the Activity detail sheet must tell the SAME money story,
 // so both read the outcome through one helper (it normalises the server's
@@ -274,6 +279,80 @@ const chromeEnter = (delay: number) =>
   })
     .duration(220)
     .delay(delay);
+
+/**
+ * The errand's steps as a calm vertical list (replaces StatusTimeline here).
+ *
+ * Done steps are primary checks joined by a solid primary line, the current
+ * step a primary ring, the rest hollow — so a finished errand reads as one
+ * completed run instead of eight identical black dots, and amber never means
+ * "done" (rule 11). Timestamps sit right-aligned in tabular figures when the
+ * status log has them.
+ */
+type TripStep = { label: string; timestamp?: string; status: 'completed' | 'current' | 'pending' };
+function TripTimeline({ steps }: { steps: TripStep[] }) {
+  return (
+    <View accessibilityRole="list">
+      {steps.map((step, i) => {
+        const done = step.status === 'completed';
+        const current = step.status === 'current';
+        const isLast = i === steps.length - 1;
+        // The line below a step is "travelled" once the NEXT step is reached.
+        const nextReached = !isLast && steps[i + 1].status !== 'pending';
+        return (
+          <View
+            key={`${step.label}-${i}`}
+            style={timelineStyles.row}
+            accessible
+            accessibilityLabel={`${step.label}, ${
+              done ? 'done' : current ? 'current step' : 'not yet'
+            }${step.timestamp ? `, ${step.timestamp}` : ''}`}
+          >
+            <View style={timelineStyles.rail}>
+              <View
+                style={[
+                  timelineStyles.marker,
+                  done && timelineStyles.markerDone,
+                  current && timelineStyles.markerCurrent,
+                ]}
+              >
+                {done ? (
+                  <Check size={11} color={LightColors.textInverse} strokeWidth={3} />
+                ) : current ? (
+                  <View style={timelineStyles.currentDot} />
+                ) : null}
+              </View>
+              {!isLast ? (
+                <View
+                  style={[
+                    timelineStyles.connector,
+                    nextReached && timelineStyles.connectorDone,
+                  ]}
+                />
+              ) : null}
+            </View>
+            <View style={[timelineStyles.body, !isLast && timelineStyles.bodyGap]}>
+              <Text
+                style={[
+                  timelineStyles.label,
+                  (done || current) && timelineStyles.labelReached,
+                ]}
+                maxFontSizeMultiplier={1.4}
+              >
+                {step.label}
+              </Text>
+              {step.timestamp ? (
+                <Text style={timelineStyles.time} maxFontSizeMultiplier={1.3}>
+                  {step.timestamp}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
 
 export default function TrackingScreen() {
   const router = useRouter();
@@ -509,6 +588,18 @@ export default function TrackingScreen() {
   // Initialised to `mapMounted` so a cold deep-link straight into map mode
   // is covered on the very first frame, not one effect-tick later.
   const [veilVisible, setVeilVisible] = useState<boolean>(mapMounted);
+  // Pattern 5 on the map: has MapLibre drawn its first tiles yet? If the map
+  // is still blank ~4s after mounting, offer the lighter path — the same
+  // live updates without the map (mapOverride 'off'). Status, ETA and the
+  // runner's position keep arriving either way; only the billed tiles stop.
+  const [mapReady, setMapReady] = useState(false);
+  const mapSlow = useSlowLoading(mapMounted && !mapReady);
+  // Filled in once dismissVeil exists (below); read only when the map fires.
+  const dismissVeilRef = useRef<() => void>(() => {});
+  const onMapReady = useCallback(() => {
+    setMapReady(true);
+    dismissVeilRef.current();
+  }, []);
   const veilOpacity = useRef(new Animated.Value(1)).current;
   const veilTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const veilDismissedRef = useRef(false);
@@ -538,10 +629,13 @@ export default function TrackingScreen() {
       }
     });
   }, [reduceMotion, veilOpacity]);
+  dismissVeilRef.current = dismissVeil;
   const prevMapMountedRef = useRef(false);
   useEffect(() => {
     const prev = prevMapMountedRef.current;
     prevMapMountedRef.current = mapMounted;
+    // A fresh mount has to draw its tiles again.
+    if (mapMounted !== prev) setMapReady(false);
     if (mapMounted && !prev) {
       veilDismissedRef.current = false;
       veilOpacity.setValue(1);
@@ -1641,6 +1735,24 @@ export default function TrackingScreen() {
     return (
       <SafeAreaView className="flex-1 bg-background" edges={['top']}>
         <TrackingSkeleton />
+        {/* Pattern 5: a first load still running after ~4s says why, with a
+            retry that restarts the same fetch. */}
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', left: 20, right: 20, bottom: insets.bottom + 24 }}
+        >
+          <SlowNetworkNotice
+            loading
+            onRetry={retryLoad}
+            style={{
+              backgroundColor: LightColors.surface,
+              borderRadius: 16,
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+              ...Elevation.md,
+            }}
+          />
+        </View>
       </SafeAreaView>
     );
   }
@@ -1667,12 +1779,15 @@ export default function TrackingScreen() {
     }
     return (
       <SafeAreaView className="flex-1 bg-background items-center justify-center px-8">
-        <Illustration name="error-not-found" size={180} style={{ marginBottom: 12 }} />
-        <Text className="text-lg font-montserrat-semi text-textPrimary">
+        <Illustration name="error-not-found" size={160} style={{ marginBottom: 12 }} />
+        <Text className="text-lg font-montserrat-bold text-textPrimary text-center">
           Errand not found
         </Text>
-        <View className="mt-4">
-          <Button title="Go Home" onPress={() => router.replace('/(customer)/(tabs)')} />
+        <Text className="text-[14px] font-montserrat text-textSecondary text-center mt-2 leading-5">
+          It isn’t on your account, or the link is out of date. Your errands are all in Activity.
+        </Text>
+        <View className="mt-5">
+          <Button title="Go to Home" onPress={() => router.replace('/(customer)/(tabs)')} />
         </View>
       </SafeAreaView>
     );
@@ -1730,7 +1845,8 @@ export default function TrackingScreen() {
   const timelineSteps = steps.map((status, index) => {
     const log = statusLogs.find((l) => l.status === status);
     let stepStatus: 'completed' | 'current' | 'pending' = 'pending';
-    if (index < currentStatusIndex) stepStatus = 'completed';
+    // A completed errand has no "current" step left — every one is done.
+    if (index < currentStatusIndex || booking.status === 'completed') stepStatus = 'completed';
     else if (index === currentStatusIndex) stepStatus = 'current';
     return {
       label: STATUS_LABELS[status],
@@ -1750,7 +1866,8 @@ export default function TrackingScreen() {
       case 'pending':
         return awaitingPayment
           ? {
-              title: 'Waiting for your payment',
+              // Specific (rule 9): "Waiting for your GCash payment".
+              title: awaitingPaymentHeadline(booking),
               subtitle: `We'll start finding a runner the moment your payment goes through. ${paymentDeadlineLine(
                 booking,
                 (ms) => formatTime(new Date(ms)),
@@ -1810,12 +1927,20 @@ export default function TrackingScreen() {
       case 'arrived_at_dropoff':
         return { title: 'Arrived at drop-off', accent: 'brand' };
       case 'delivered':
-      case 'completed':
+      case 'completed': {
+        // A fact, not a pleasantry: when it was finished, when we know.
+        const finishedAt =
+          booking.completed_at ??
+          statusLogs.find((l) => l.status === booking.status)?.created_at ??
+          null;
         return {
           title: isSingleLocation ? 'All done' : 'Delivered',
-          subtitle: 'Thanks for using ErrandGuy.',
+          subtitle: finishedAt
+            ? `${booking.status === 'completed' ? 'Completed' : 'Delivered'} ${formatMonthDayTime(finishedAt)}`
+            : undefined,
           accent: 'success',
         };
+      }
       case 'cancelled':
         // A one-word receipt left the customer to guess what it cost. Lead
         // with the money headline; the card below carries the figures.
@@ -1876,14 +2001,13 @@ export default function TrackingScreen() {
   // Same condition as the old hero's showEta — the numeral leads the handle
   // only while a live runner ETA is meaningful.
   const showEtaNumeral = !heroEtaLabel && !!runnerLocation && eta.minutes != null;
-  // Clamped to ≥1: pending/matched aren't in errandRule.statusFlow (it
-  // starts at 'accepted'), and "STEP 0 OF 6" would read as a bug.
-  const stepNumber = Math.min(Math.max(currentStatusIndex + 1, 1), steps.length);
-  const eyebrowText = showEtaNumeral
-    ? isPickupPhase
-      ? 'TO PICKUP'
-      : 'TO DROP-OFF'
-    : `STEP ${stepNumber} OF ${steps.length}`;
+  // The eyebrow only labels the ETA numeral now. It used to read "STEP 1 OF
+  // 8" (statusFlow's count) right above the beads' own "01 / 06" — two
+  // progress counters that disagreed. The beads are the one indicator.
+  const eyebrowText = showEtaNumeral ? (isPickupPhase ? 'TO PICKUP' : 'TO DROP-OFF') : null;
+  // Nothing has started while a GCash/Maya payment is outstanding, so no
+  // journey beads either — the heading says what the errand is waiting on.
+  const showBeads = !awaitingPayment;
 
   // Status-pill dot: muted until a runner exists / realtime connects, brand
   // when connected but idle, success while moving. Terminal receipts drop it.
@@ -2116,16 +2240,19 @@ export default function TrackingScreen() {
   ) : null;
 
   // Trip route — the timeline stays surfaced by default, not behind a toggle.
-  const tripRouteSection = (
-    <View className="mt-3 mb-2">
+  // A cancelled or never-matched errand reached none of these steps (its
+  // status isn't in the flow), so eight hollow rows would say nothing; the
+  // money card tells that story instead.
+  const tripRouteSection = isMoneyOutcome ? null : (
+    <View className="mt-5 mb-2">
       <Text
         className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-3"
         style={{ letterSpacing: 1.4 }}
         maxFontSizeMultiplier={1.3}
       >
-        Trip route
+        {booking.status === 'completed' ? 'Timeline' : 'Progress'}
       </Text>
-      <StatusTimeline steps={timelineSteps} />
+      <TripTimeline steps={timelineSteps} />
     </View>
   );
 
@@ -2164,22 +2291,55 @@ export default function TrackingScreen() {
   // errand from one still waiting. Cancelled / no-runner errands show their
   // money outcome instead. On a shopping run this is the fare only — the item
   // money is the cash strip.
-  const fareLine = farePaymentLine(booking);
+  // While a GCash/Maya payment is outstanding the heading already says
+  // "Waiting for your GCash payment" and the button says "Pay ₱95.00", so the
+  // row drops its "Waiting for your … payment" line rather than say it a third
+  // time (rule 2).
+  const fareLine = awaitingPayment ? null : farePaymentLine(booking);
+  // On a finished receipt the fare is the key figure (rule 7): larger, on the
+  // page rather than in a grey box.
+  const fareProminent = isTerminalUi;
   const fareSection = !isMoneyOutcome ? (
     <View
-      className="mt-3 flex-row items-center justify-between rounded-xl px-3 py-2.5 bg-surfaceMuted"
+      className={
+        fareProminent
+          ? 'mt-1 flex-row items-end justify-between pb-4 border-b border-divider'
+          : 'mt-3 flex-row items-center justify-between rounded-xl px-3 py-2.5 bg-surfaceMuted'
+      }
       accessible
       accessibilityLabel={`${isShopping ? 'Errand fare, not counting items' : 'Errand fare'}: ${formatCurrency(booking.total_amount)}${fareLine ? `. ${fareLine}` : ''}`}
     >
       <View className="flex-1 pr-3">
-        <Text className="text-[13px] font-montserrat-semi text-textPrimary">
+        <Text
+          className={
+            fareProminent
+              ? 'text-[12px] font-montserrat-semi text-textSecondary'
+              : 'text-[13px] font-montserrat-semi text-textPrimary'
+          }
+        >
           {isShopping ? 'Errand fare' : 'Fare'}
         </Text>
         {fareLine ? (
-          <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">{fareLine}</Text>
+          <Text
+            className={
+              fareProminent
+                ? 'text-[13px] font-montserrat-semi text-textPrimary mt-1'
+                : 'text-[11px] font-montserrat text-textSecondary mt-0.5'
+            }
+          >
+            {fareLine}
+          </Text>
         ) : null}
       </View>
-      <Text className="text-[15px] font-inter-semi text-textPrimary tabular-nums">
+      <Text
+        className={
+          fareProminent
+            ? 'text-[28px] font-inter-semi text-textPrimary tabular-nums'
+            : 'text-[15px] font-inter-semi text-textPrimary tabular-nums'
+        }
+        style={fareProminent ? { lineHeight: 32, letterSpacing: -0.4 } : undefined}
+        maxFontSizeMultiplier={1.3}
+      >
         {formatCurrency(booking.total_amount)}
       </Text>
     </View>
@@ -2524,6 +2684,10 @@ export default function TrackingScreen() {
     </View>
   ) : null;
 
+  // Shown on every cancelled / unmatched receipt, except an unpaid-payment
+  // cancel where no money moved: its red card already says so in full.
+  const showMoneyOutcome = !(cancelledUnpaid && !money.moneyMoved);
+
   // Quiet report-a-problem link — routes to the support composer pre-seeded
   // with this booking. Safety category while an SOS is live, otherwise a plain
   // booking issue. Deliberately understated (textSecondary, no card) so it
@@ -2591,7 +2755,7 @@ export default function TrackingScreen() {
                 showsMyLocationButton={false}
                 showsCompass={false}
                 maxZoomLevel={17}
-                onMapReady={dismissVeil}
+                onMapReady={onMapReady}
                 initialRegion={{
                   latitude: mapCenter[1],
                   longitude: mapCenter[0],
@@ -2946,6 +3110,61 @@ export default function TrackingScreen() {
                 >
                   <Crosshair size={20} color={LightColors.textPrimary} strokeWidth={2} />
                 </Pressable>
+                {/* The lighter path when the tiles are slow (pattern 5). */}
+                {mapSlow ? (
+                  <View
+                    pointerEvents="box-none"
+                    style={{
+                      position: 'absolute',
+                      left: 16,
+                      right: 16,
+                      top: chromeBottom + 8,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <View
+                      style={[
+                        styles.chromeSurface,
+                        {
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          borderRadius: 999,
+                          paddingLeft: 14,
+                          paddingRight: 6,
+                          minHeight: 44,
+                          maxWidth: '100%',
+                        },
+                      ]}
+                      accessibilityRole="alert"
+                    >
+                      <Text
+                        className="text-[12px] font-montserrat-semi text-textSecondary"
+                        style={{ flexShrink: 1 }}
+                        maxFontSizeMultiplier={1.3}
+                      >
+                        Map is slow
+                      </Text>
+                      <Pressable
+                        onPress={() => {
+                          haptics.selection();
+                          setMapOverride('off');
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Show updates without the map"
+                        hitSlop={6}
+                        className="ml-2 rounded-full px-3 justify-center active:opacity-70"
+                        style={{ minHeight: 32, backgroundColor: LightColors.primary50 }}
+                      >
+                        <Text
+                          className="text-[12px] font-montserrat-bold text-primary"
+                          maxFontSizeMultiplier={1.3}
+                        >
+                          Updates without the map
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : null}
               </>
             )}
           </>
@@ -2983,16 +3202,24 @@ export default function TrackingScreen() {
               <ArrowLeft size={22} color={LightColors.textPrimary} strokeWidth={2.2} />
             </Pressable>
           </Reanimated.View>
-          {/* 44pt back circle + 44pt spacer keep the pill optically centered. */}
-          <View className="flex-1 items-center px-2" pointerEvents="box-none">
+          {/* 44pt back circle + 44pt spacer keep the pill optically centered.
+              The live region sits on this always-mounted wrapper, so TalkBack
+              still hears the pill appear (and change) once a runner is on it. */}
+          <View
+            className="flex-1 items-center px-2"
+            pointerEvents="box-none"
+            accessibilityLiveRegion="polite"
+          >
             {/* Live tracking: the status pill floats over the map. Terminal:
                 hidden — the sheet's own hero (illustration + status) carries it,
-                so the pill no longer stacks on top of the collapsed handle. */}
-            {!isTerminalUi && (
+                so the pill no longer stacks on top of the collapsed handle.
+                Before a runner is on the errand (searching, scheduled, waiting
+                for payment) it is hidden too: it could only repeat the sheet's
+                heading (rule 2), and there is no live connection to report. */}
+            {!isTerminalUi && !!booking.runner_id && (
             <Reanimated.View
               entering={reduceMotion ? FadeIn.duration(120) : chromeEnter(40)}
               accessible
-              accessibilityLiveRegion="polite"
               accessibilityLabel={`${pillLabel}${
                 booking.runner_id && !isTerminalUi
                   ? isConnected
@@ -3063,26 +3290,16 @@ export default function TrackingScreen() {
         reduceMotion={reduceMotion}
         renderHandle={() =>
           isTerminalUi ? (
-            /* Terminal receipt: the scrollable body hero (illustration +
-               status + trip route) tells the whole story, so the handle
-               collapses to a slim premium journey-summary strip. Removes the
-               old triple-status stack (chrome pill + eyebrow + title) and the
-               overlap with the floating back chrome. no_runner has no journey
-               to summarise, so it collapses to a bare grab area. */
-            <View className="px-5 pt-2 pb-2">
-              {booking.status !== 'no_runner' && (
-                <JourneyBeads
-                  status={booking.status}
-                  accent={booking.status === 'cancelled' ? 'danger' : 'success'}
-                  showLabel={false}
-                />
-              )}
-            </View>
+            /* Terminal receipt: the body's hero (one check or illustration +
+               one headline) is the single statement of the outcome, so the
+               handle is just the grab bar. A "DONE" bead strip here used to
+               say it a third time, over the big check and "Delivered". */
+            null
           ) : (
           <View
             className="px-5 pt-1 pb-1"
             accessible
-            accessibilityLabel={`Step ${Math.min(currentStatusIndex + 1, steps.length)} of ${steps.length}${
+            accessibilityLabel={`${showEtaNumeral ? (isPickupPhase ? 'To pickup' : 'To drop-off') : heroCopy.title}${
               /* Spoken ETA gated identically to the visual numeral — on
                  arrived and terminal statuses the pill shows Here/Done/Ended,
                  so a stale minute count must never be announced over it. */
@@ -3095,14 +3312,16 @@ export default function TrackingScreen() {
           >
             <View className="flex-row items-center">
               <View className="flex-1 pr-3">
-                <Text
-                  className="text-[11px] font-montserrat-bold uppercase"
-                  style={{ color: accentText, letterSpacing: 1.2 }}
-                  numberOfLines={1}
-                  maxFontSizeMultiplier={1.3}
-                >
-                  {eyebrowText}
-                </Text>
+                {eyebrowText ? (
+                  <Text
+                    className="text-[11px] font-montserrat-bold uppercase"
+                    style={{ color: accentText, letterSpacing: 1.2 }}
+                    numberOfLines={1}
+                    maxFontSizeMultiplier={1.3}
+                  >
+                    {eyebrowText}
+                  </Text>
+                ) : null}
                 {showEtaNumeral ? (
                   <View className="flex-row" style={{ alignItems: 'baseline', minHeight: 40 }}>
                     <Reanimated.Text
@@ -3172,13 +3391,15 @@ export default function TrackingScreen() {
                 block inside the 0.24 peek band on a 360x640 Android at font
                 scale 1.3 with a two-line headline (e.g. "Arrived at drop-off"),
                 so the live micro-row below never clips under the peek fold. */}
-            <View className="pt-2">
-              <JourneyBeads
-                status={booking.status}
-                accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
-                showLabel={false}
-              />
-            </View>
+            {showBeads ? (
+              <View className="pt-2">
+                <JourneyBeads
+                  status={booking.status}
+                  accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
+                  showLabel={false}
+                />
+              </View>
+            ) : null}
             {booking.runner_id && !isTerminalUi ? (
               <View className="flex-row items-center justify-end -mt-1 mb-1">
                 <View className={`w-1.5 h-1.5 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-textMuted'}`} />
@@ -3195,9 +3416,14 @@ export default function TrackingScreen() {
           )
         }
         footer={
-          // SOS is available on ANY live errand. It stays through 'delivered'
-          // (post-dropoff safety window) and only drops on
-          // completed/cancelled/no_runner — isLiveBooking is exactly that set.
+          // SOS is offered once a runner is on the errand, and stays through
+          // 'delivered' (post-dropoff safety window); it drops on
+          // completed/cancelled/no_runner (isLiveBooking). Before a runner is
+          // assigned — searching, scheduled, waiting for payment — there is
+          // nobody on the errand for an emergency to involve, and a big red
+          // button over "Waiting for your payment" crowded out the one thing
+          // the customer had to do. (The server would accept it; it just isn't
+          // the help anyone needs there.) A queued or live alert still shows.
           // Terminal receipts with nothing to show render no footer at all.
           isLiveBooking || sosActive || sosResolved || !!queuedSos || canCancel ? (
             <View style={{ gap: 8 }}>
@@ -3205,14 +3431,15 @@ export default function TrackingScreen() {
                   reopens the same checkout, so it can never charge twice. */}
               {awaitingPayment && checkoutUrl ? (
                 <Button
-                  title="Complete payment"
+                  title={payNowLabel(booking)}
+                  accessibilityHint="Reopens your checkout for this errand"
                   onPress={completePayment}
                   loading={openingCheckout}
                   loadingTitle="Opening checkout…"
                   fullWidth
                 />
               ) : null}
-              {!sosActive && !queuedSos && isLiveBooking && (
+              {!sosActive && !queuedSos && isLiveBooking && !!booking.runner_id && (
                 <Button
                   title="Emergency SOS"
                   variant="danger"
@@ -3314,40 +3541,86 @@ export default function TrackingScreen() {
                the one frame before the completed→rate replace is coherent. */
             <>
               <View className="items-center mt-2 mb-6">
-                {/* The two recoverable/terminal error outcomes lead with a
-                    generated illustration instead of the small tone glyph —
-                    delivered/completed keep the compact circle. */}
-                {booking.status === 'no_runner' || booking.status === 'cancelled' ? (
-                  <Illustration
-                    name={booking.status === 'cancelled' ? 'booking-cancelled' : 'error-no-runner'}
-                    size={150}
-                    style={{ marginBottom: 4 }}
-                  />
-                ) : (
+                {cancelledUnpaid ? (
+                  /* Pattern 3 — the payment failed: a red-tinted card that
+                     says what happened and, in the server's terms, what it
+                     cost. "You weren't charged" comes only from
+                     unpaidCancelMessage, which the server's own
+                     payment_not_completed verdict gates (it cancels only an
+                     errand with no completed charge) — never guessed. */
                   <View
+                    className="w-full rounded-2xl p-4"
                     style={{
-                      width: 56,
-                      height: 56,
-                      borderRadius: 28,
-                      backgroundColor: receiptTone.bg,
-                      alignItems: 'center',
-                      justifyContent: 'center',
+                      backgroundColor: LightColors.dangerSoft,
+                      borderWidth: 1,
+                      borderColor: `${LightColors.danger}40`,
                     }}
+                    accessible
+                    accessibilityRole="alert"
+                    accessibilityLabel={`${heroCopy.title}. ${heroCopy.subtitle ?? ''}`}
                   >
-                    <receiptTone.Icon size={28} color={receiptTone.fg} strokeWidth={2.2} />
+                    <View className="flex-row items-center">
+                      <AlertTriangle size={20} color={LightColors.dangerDark} strokeWidth={2.2} />
+                      <Text
+                        className="ml-2 flex-1 text-[17px] font-montserrat-bold"
+                        style={{ color: LightColors.dangerDark }}
+                        maxFontSizeMultiplier={1.3}
+                      >
+                        {heroCopy.title}
+                      </Text>
+                    </View>
+                    {heroCopy.subtitle ? (
+                      <Text className="text-[14px] font-montserrat text-textPrimary mt-2 leading-5">
+                        {heroCopy.subtitle}
+                      </Text>
+                    ) : null}
                   </View>
+                ) : (
+                  <>
+                    {/* One mark per outcome, as a line icon in a soft circle
+                        (the owner's state language): a solid success check
+                        for a finished errand; X / SearchX on their soft
+                        washes for cancelled / no runner. Shape, not colour
+                        alone, tells them apart. */}
+                    <View
+                      style={{
+                        width: 64,
+                        height: 64,
+                        borderRadius: 32,
+                        backgroundColor:
+                          booking.status === 'delivered' || booking.status === 'completed'
+                            ? LightColors.success
+                            : receiptTone.bg,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      accessibilityElementsHidden
+                      importantForAccessibility="no-hide-descendants"
+                    >
+                      <receiptTone.Icon
+                        size={32}
+                        color={
+                          booking.status === 'delivered' || booking.status === 'completed'
+                            ? LightColors.textInverse
+                            : receiptTone.fg
+                        }
+                        strokeWidth={2.4}
+                      />
+                    </View>
+                    <Text
+                      className="text-[26px] font-montserrat-bold text-textPrimary text-center mt-3"
+                      maxFontSizeMultiplier={1.2}
+                      accessibilityRole="header"
+                    >
+                      {heroCopy.title}
+                    </Text>
+                    {heroCopy.subtitle ? (
+                      <Text className="text-[14px] font-montserrat text-textSecondary text-center mt-1 tabular-nums">
+                        {heroCopy.subtitle}
+                      </Text>
+                    ) : null}
+                  </>
                 )}
-                <Text
-                  className="text-[26px] font-montserrat-bold text-textPrimary text-center mt-3"
-                  maxFontSizeMultiplier={1.2}
-                >
-                  {heroCopy.title}
-                </Text>
-                {heroCopy.subtitle ? (
-                  <Text className="text-[13px] font-montserrat text-textSecondary text-center mt-1">
-                    {heroCopy.subtitle}
-                  </Text>
-                ) : null}
                 {booking.status === 'no_runner' && (
                   <View className="mt-4 w-full">
                     <Button title="Book again" onPress={handleRebook} fullWidth />
@@ -3360,9 +3633,19 @@ export default function TrackingScreen() {
                     <Button
                       title="Book again"
                       onPress={handleRebook}
-                      accessibilityHint="Starts a new errand pre-filled from this one"
+                      accessibilityHint="Starts a new errand pre-filled from this one — you can pick another way to pay"
                       fullWidth
                     />
+                    {/* The alternative: someone who believes they DID pay
+                        needs a person, not another checkout. */}
+                    <View className="mt-3">
+                      <Button
+                        title="Get help with this payment"
+                        variant="outline"
+                        onPress={() => handleReportProblem('booking')}
+                        fullWidth
+                      />
+                    </View>
                   </View>
                 )}
                 {/* A cancelled errand's only remaining action used to be
@@ -3392,7 +3675,10 @@ export default function TrackingScreen() {
                   </View>
                 )}
               </View>
-              {moneyOutcomeSection}
+              {/* The red card above already says nothing was charged; the
+                  "What it cost" box would only repeat it (rule 2). Any money
+                  that DID move still gets its figures. */}
+              {showMoneyOutcome ? moneyOutcomeSection : null}
               {fareSection}
               {tripRouteSection}
               {detailsSection}
@@ -3431,7 +3717,7 @@ export default function TrackingScreen() {
         </ScrollView>
       </ExpandableSheet>
 
-      {/* Verifies a reopened GCash/Maya checkout ("Complete payment"). */}
+      {/* Verifies a reopened GCash/Maya checkout (the "Pay" button). */}
       <PaymentProgress {...checkoutProgress} />
 
       {/* Cancel confirmation */}
@@ -3632,6 +3918,70 @@ export default function TrackingScreen() {
     </View>
   );
 }
+
+const timelineStyles = StyleSheet.create({
+  row: { flexDirection: 'row' },
+  rail: { width: 20, alignItems: 'center', marginRight: 12 },
+  marker: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: LightColors.dividerStrong,
+    backgroundColor: LightColors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  markerDone: {
+    borderColor: LightColors.primary,
+    backgroundColor: LightColors.primary,
+  },
+  markerCurrent: {
+    borderColor: LightColors.primary,
+    borderWidth: 2,
+  },
+  currentDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: LightColors.primary,
+  },
+  connector: {
+    flex: 1,
+    width: 2,
+    minHeight: 12,
+    marginVertical: 2,
+    borderRadius: 1,
+    backgroundColor: LightColors.divider,
+  },
+  connectorDone: { backgroundColor: LightColors.primary },
+  body: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  bodyGap: { paddingBottom: 14 },
+  label: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.textSecondary,
+  },
+  labelReached: {
+    fontFamily: 'Quicksand_600SemiBold',
+    color: LightColors.textPrimary,
+  },
+  time: {
+    marginLeft: 12,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: 'Inter_500Medium',
+    fontVariant: ['tabular-nums'],
+    color: LightColors.textSecondary,
+  },
+});
 
 const styles = StyleSheet.create({
   // "Frosted" chrome recipe — near-opaque white. expo-blur isn't installed,

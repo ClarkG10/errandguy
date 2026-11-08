@@ -19,7 +19,7 @@ import { ChatImage } from '../../../components/chat/ChatImage';
 import { ClosedThreadNotice } from '../../../components/chat/ClosedThreadNotice';
 import { useChatPeer } from '../../../components/chat/useChatPeer';
 import { useLocalSearchParams } from 'expo-router';
-import { Send, Camera, Phone, Check, CheckCheck, Clock, AlertCircle, RotateCw, ArrowDown } from 'lucide-react-native';
+import { Send, Camera, Phone, Check, CheckCheck, Clock, AlertCircle, RotateCw, ArrowDown, MessageCircle } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../stores/authStore';
@@ -534,7 +534,7 @@ export default function RunnerChatScreen() {
       if (isSystem) {
         return (
           <View className="items-center my-2 px-4">
-            <Text className="text-xs font-montserrat italic text-textSecondary text-center">
+            <Text className="text-xs font-montserrat text-textSecondary text-center">
               {m.content}
             </Text>
           </View>
@@ -736,9 +736,25 @@ export default function RunnerChatScreen() {
                   style={{ transform: [{ scaleY: -1 }] }}
                 >
                   {loadError ? null : (
-                    <Text className="text-sm font-montserrat text-textSecondary text-center">
-                      Say hello — messages about this errand appear here.
-                    </Text>
+                    // Pattern 1: what this space is for, and the one next
+                    // step (the quick replies sit right under it).
+                    <>
+                      <View
+                        className="w-14 h-14 rounded-full bg-primaryLight items-center justify-center mb-3"
+                        accessibilityElementsHidden
+                        importantForAccessibility="no-hide-descendants"
+                      >
+                        <MessageCircle size={24} color={LightColors.primary} strokeWidth={2} />
+                      </View>
+                      <Text className="text-base font-montserrat-bold text-textPrimary text-center">
+                        No messages yet
+                      </Text>
+                      <Text className="text-sm font-montserrat text-textSecondary text-center mt-1">
+                        {threadClosed
+                          ? 'Nothing was sent on this errand.'
+                          : 'Messages about this errand show up here. Tap a quick reply below to let the customer know where you are.'}
+                      </Text>
+                    </>
                   )}
                 </View>
               )
@@ -842,7 +858,7 @@ export default function RunnerChatScreen() {
                   // Broadcast a throttled "typing" ping to the customer.
                   sendTyping();
                 }}
-                placeholder="Type a message..."
+                placeholder="Type a message…"
                 placeholderTextColor={LightColors.textMuted}
                 multiline
                 editable={!sending}
@@ -886,7 +902,7 @@ export default function RunnerChatScreen() {
         visible={imagePickerVisible}
         onClose={() => setImagePickerVisible(false)}
         onConfirm={handleImageSend}
-        title="Send Photo"
+        title="Send a photo"
         subtitle="Share a photo in the chat"
       />
 

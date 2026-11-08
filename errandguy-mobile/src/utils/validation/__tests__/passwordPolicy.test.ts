@@ -57,12 +57,18 @@ describe('new-password policy (sign-up, reset, change password)', () => {
       'components/settings/ChangePasswordSheet.tsx',
     ]) {
       const src = read(file);
-      expect(src).toMatch(/rules=\{newPasswordRules\}/);
-      expect(src).toMatch(/confirmPasswordRules\(/);
+      // The sign-in screens word each miss as its fix (components/auth/
+      // fieldRules), but the rules themselves still come from here.
+      expect(src).toMatch(/rules=\{newPasswordRules\}|asRule\(newPasswordProblem\)/);
+      expect(src).toMatch(/confirmPasswordRules\(|confirmPasswordProblem\(/);
       expect(src).toMatch(/<PasswordStrengthIndicator /);
       // No private copy of the rules left behind.
       expect(src).not.toMatch(/\[!@#\$%\^&\*/);
     }
     expect(read('components/auth/PasswordStrengthIndicator.tsx')).toMatch(/PASSWORD_REQUIREMENTS/);
+    // The how-to-fix wording derives from the same list — no second copy.
+    const fieldRules = read('components/auth/fieldRules.ts');
+    expect(fieldRules).toMatch(/PASSWORD_REQUIREMENTS\.find/);
+    expect(fieldRules).not.toMatch(/\[!@#\$%\^&\*/);
   });
 });

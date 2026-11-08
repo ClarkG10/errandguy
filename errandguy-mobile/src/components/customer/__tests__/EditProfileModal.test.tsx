@@ -67,9 +67,9 @@ describe('EditProfileModal', () => {
   it('lets a customer change their phone, sent in the shape the server stores', async () => {
     const screen = renderSheet();
 
-    fireEvent.changeText(screen.getByLabelText('Phone Number (optional)'), '0918 555 1234');
+    fireEvent.changeText(screen.getByLabelText('Phone number (optional)'), '0918 555 1234');
     await act(async () => {
-      fireEvent.press(screen.getByText('Save Changes'));
+      fireEvent.press(screen.getByText('Save changes'));
     });
 
     expect(mockUpdate).toHaveBeenCalledWith(
@@ -83,9 +83,9 @@ describe('EditProfileModal', () => {
   it('checks the number the same way the runner screen does', async () => {
     const screen = renderSheet();
 
-    fireEvent.changeText(screen.getByLabelText('Phone Number (optional)'), '12345');
+    fireEvent.changeText(screen.getByLabelText('Phone number (optional)'), '12345');
     await act(async () => {
-      fireEvent.press(screen.getByText('Save Changes'));
+      fireEvent.press(screen.getByText('Save changes'));
     });
 
     expect(mockUpdate).not.toHaveBeenCalled();
@@ -97,7 +97,7 @@ describe('EditProfileModal', () => {
 
     fireEvent.changeText(screen.getByLabelText('Email'), 'new@example.com');
     await act(async () => {
-      fireEvent.press(screen.getByText('Save Changes'));
+      fireEvent.press(screen.getByText('Save changes'));
     });
 
     expect(useAuthStore.getState().user?.email).toBe('new@example.com');
@@ -116,7 +116,7 @@ describe('EditProfileModal', () => {
 
     fireEvent.changeText(screen.getByLabelText('Email'), 'taken@example.com');
     await act(async () => {
-      fireEvent.press(screen.getByText('Save Changes'));
+      fireEvent.press(screen.getByText('Save changes'));
     });
 
     expect(useAuthStore.getState().user?.email).toBe('rina@example.com');

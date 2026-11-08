@@ -19,6 +19,19 @@ import { errorMessage } from '../../../utils/errorCatalog';
 import { isPhMobile } from '../../../utils/phone';
 import { copy } from '../../../constants/copy';
 
+/** What's wrong with an email and how to fix it, or null when it passes. */
+function emailProblem(value: string): string | null {
+  const v = value.trim();
+  if (!v) return null;
+  if (!v.includes('@')) return 'Add an @, like name@gmail.com.';
+  const [local, domain = ''] = v.split('@');
+  if (!local) return 'Add the part before the @, like name@gmail.com.';
+  if (!/.+\..+/.test(domain)) return 'Add a domain, like name@gmail.com.';
+  return /\s/.test(v) ? 'Remove the spaces from your email.' : null;
+}
+
+const PHONE_HINT = 'Use a PH mobile number, like 0917 123 4567.';
+
 export default function EditProfileScreen() {
   const router = useRouter();
   const navigation = useNavigation();
@@ -88,13 +101,14 @@ export default function EditProfileScreen() {
 
     let hasError = false;
     if (!trimmedName) {
-      setNameError('Full name is required');
+      setNameError('Add your full name, as it appears on your ID.');
       hasError = true;
     } else {
       setNameError(undefined);
     }
-    if (trimmedEmail && !/.+@.+\..+/.test(trimmedEmail)) {
-      setEmailError('Enter a valid email address');
+    const emailIssue = emailProblem(trimmedEmail);
+    if (emailIssue) {
+      setEmailError(emailIssue);
       hasError = true;
     } else {
       setEmailError(undefined);
@@ -102,12 +116,15 @@ export default function EditProfileScreen() {
     // The server only takes a PH mobile number (09…, +63 9…); the service
     // sends it as +639XXXXXXXXX.
     if (trimmedPhone && !isPhMobile(trimmedPhone)) {
-      setPhoneError('Enter a valid PH mobile number, e.g. 0917 123 4567');
+      setPhoneError(PHONE_HINT);
       hasError = true;
     } else {
       setPhoneError(undefined);
     }
-    if (hasError) return;
+    if (hasError) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      return;
+    }
 
     setLoading(true);
     try {
@@ -121,7 +138,25 @@ export default function EditProfileScreen() {
       toast.success('Your profile changes have been saved.');
       leaveScreen();
     } catch (err: any) {
-      toast.error(errorMessage(err, copy.profile.saveFailed));
+      // A 422 names the field — put it under that field (pattern 9) and keep
+      // the toast for failures with no field to point at.
+      const fieldErrors = err?.status === 422 && err?.errors && typeof err.errors === 'object'
+        ? (err.errors as Record<string, unknown>)
+        : null;
+      const first = (k: string) => {
+        const m = fieldErrors?.[k];
+        return Array.isArray(m) ? String(m[0]) : typeof m === 'string' ? m : undefined;
+      };
+      const nameMsg = first('full_name');
+      const phoneMsg = first('phone');
+      const emailMsg = first('email');
+      if (nameMsg || phoneMsg || emailMsg) {
+        if (nameMsg) setNameError(nameMsg);
+        if (phoneMsg) setPhoneError(phoneMsg);
+        if (emailMsg) setEmailError(emailMsg);
+      } else {
+        toast.error(errorMessage(err, copy.profile.saveFailed));
+      }
     } finally {
       setLoading(false);
     }
@@ -171,7 +206,7 @@ export default function EditProfileScreen() {
           <Eyebrow className="mb-2 ml-1">Personal details</Eyebrow>
           <Card padding="md">
             <Input
-              label="Full Name *"
+              label="Full name"
               value={fullName}
               onChangeText={(text) => {
                 setFullName(text);
@@ -187,7 +222,7 @@ export default function EditProfileScreen() {
             />
             <Input
               ref={phoneRef}
-              label="Phone Number (optional)"
+              label="Phone number (optional)"
               value={phone}
               onChangeText={(text) => {
                 setPhone(text);
@@ -200,11 +235,16 @@ export default function EditProfileScreen() {
               autoComplete="tel"
               returnKeyType="next"
               onSubmitEditing={() => emailRef.current?.focus()}
+              onBlur={() => {
+                const v = phone.trim();
+                if (v && !isPhMobile(v)) setPhoneError(PHONE_HINT);
+              }}
+              valid={!!phone.trim() && isPhMobile(phone.trim()) && phone !== initial.current.phone}
               error={phoneError}
             />
             <Input
               ref={emailRef}
-              label="Email Address (optional)"
+              label="Email (optional)"
               value={email}
               onChangeText={(text) => {
                 setEmail(text);
@@ -217,6 +257,11 @@ export default function EditProfileScreen() {
               autoComplete="email"
               returnKeyType="done"
               onSubmitEditing={handleSave}
+              onBlur={() => {
+                const issue = emailProblem(email);
+                if (issue) setEmailError(issue);
+              }}
+              valid={!!email.trim() && !emailProblem(email) && email !== initial.current.email}
               error={emailError}
             />
           </Card>
@@ -234,6 +279,7 @@ export default function EditProfileScreen() {
             loading={loading}
             loadingTitle="Saving…"
             disabled={!dirty}
+            disabledReason={dirty ? '' : 'No changes to save yet.'}
             fullWidth
             size="lg"
           />

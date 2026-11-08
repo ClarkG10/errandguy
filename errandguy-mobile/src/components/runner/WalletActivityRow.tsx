@@ -102,7 +102,7 @@ export function WalletActivityRow({ tx, divider = true }: WalletActivityRowProps
   // Pending/failed amounts read quieter than settled ones, but they are still
   // content: textTertiary, not textMuted (2.6:1, placeholder grey).
   const amountClass = !settled
-    ? 'text-textTertiary'
+    ? 'text-textSecondary'
     : isCredit
       ? 'text-successDark'
       : 'text-textPrimary';
@@ -115,22 +115,22 @@ export function WalletActivityRow({ tx, divider = true }: WalletActivityRowProps
     >
       <View className="w-9 h-9 rounded-full bg-surfaceMuted items-center justify-center">
         <Icon
-          size={17}
-          color={settled ? config.color : LightColors.textMuted}
+          size={20}
+          color={settled ? config.color : LightColors.textSecondary}
           strokeWidth={1.8}
         />
       </View>
       <View className="flex-1 ml-3">
-        <Text className="text-[13px] font-montserrat-bold text-textPrimary" numberOfLines={2}>
+        <Text className="text-[14px] font-montserrat-bold text-textPrimary" numberOfLines={2}>
           {tx.display_description ?? tx.description ?? titleCase(String(tx.type))}
         </Text>
         <View className="flex-row items-center flex-wrap mt-0.5">
-          <Text className="text-[11px] font-montserrat text-textSecondary">
+          <Text className="text-[12px] font-montserrat text-textSecondary">
             {formatRelativeTime(tx.created_at)}
           </Text>
           {chip && (
             <Text
-              className="text-[11px] font-montserrat-semi ml-1.5"
+              className="text-[12px] font-montserrat-semi ml-1.5"
               style={{ color: chip.color }}
             >
               · {chip.label}
@@ -138,19 +138,22 @@ export function WalletActivityRow({ tx, divider = true }: WalletActivityRowProps
           )}
         </View>
         {status === 'failed' && tx.failure_reason ? (
-          <Text className="text-[11px] font-montserrat text-dangerDark mt-0.5" numberOfLines={2}>
+          <Text className="text-[12px] font-montserrat text-dangerDark mt-0.5" numberOfLines={2}>
             {tx.failure_reason}
           </Text>
         ) : null}
       </View>
       <View className="items-end ml-2">
-        <Text className={`text-[14px] font-inter-semi tabular-nums ${amountClass}`}>
+        <Text
+          className={`text-[15px] font-inter-semi tabular-nums ${amountClass}`}
+          style={{ fontVariant: ['tabular-nums'] }}
+        >
           {/* No sign on an unsettled row — a sign implies the money moved. */}
           {!settled ? '' : isCredit ? '+' : '−'}
           {formatCurrency(Math.abs(amount))}
         </Text>
         {settled && tx.balance_after != null ? (
-          <Text className="text-[10px] font-inter tabular-nums text-textTertiary mt-0.5">
+          <Text className="text-[11px] font-inter tabular-nums text-textSecondary mt-0.5">
             Bal {formatCurrency(Number(tx.balance_after))}
           </Text>
         ) : null}

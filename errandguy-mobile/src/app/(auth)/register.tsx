@@ -29,12 +29,19 @@ import { userService } from '../../services/user.service';
 import { authService } from '../../services/auth.service';
 import { geocodingService, type PlaceFeature } from '../../services/geocoding.service';
 import { toast } from '../../stores/toastStore';
+import { PermissionSheet } from '../../components/ui/PermissionSheet';
+import {
+  asRule,
+  confirmPasswordProblem,
+  emailProblem,
+  fullNameProblem,
+  newPasswordProblem,
+  phoneProblem,
+} from '../../components/auth/fieldRules';
 import { errorMessage, tooManyAttemptsMessage } from '../../utils/errorCatalog';
 import { LightColors, Elevation } from '../../constants/colors';
 import { PRIVACY_POLICY_VERSION } from '../../constants/legal';
-import { isPhMobile } from '../../utils/phone';
 import { compressProofImage } from '../../utils/proofImage';
-import { confirmPasswordRules, newPasswordRules } from '../../utils/validation/passwordPolicy';
 
 interface RegisterFormData {
   full_name: string;
@@ -59,19 +66,34 @@ const FIELD_ORDER = [
   'confirm_password',
 ] as const;
 
+/** How the disabled CTA names a missing / a wrong field. */
+const FIELD_TO_ADD: Record<(typeof FIELD_ORDER)[number], string> = {
+  full_name: 'your full name',
+  phone: 'your mobile number',
+  email: 'your email',
+  password: 'a password',
+  confirm_password: 'your password again',
+};
+const FIELD_LABEL: Record<(typeof FIELD_ORDER)[number], string> = {
+  full_name: 'Full name',
+  phone: 'Mobile number',
+  email: 'Email',
+  password: 'Password',
+  confirm_password: 'Confirm password',
+};
+
 export default function RegisterScreen() {
   const router = useRouter();
   const { register } = useAuth();
   // Opt into the hook's denial callback. Without it the avatar tile was a
   // SILENT dead button once photo access was denied: the picker returns null,
   // nothing renders, nothing explains, and the OS will not prompt again — on
-  // the very first screen of the app. Same copy and recovery route as
-  // PhotoProofModal / ReceiptCaptureModal.
+  // the very first screen of the app. Pattern 7: a sheet that says why
+  // ("Photo access is off — enable it in Settings"), with Allow in Settings
+  // and the alternative — the photo is optional, so "Skip the photo for now".
+  const [photoDenied, setPhotoDenied] = useState(false);
   const handlePhotoPermissionDenied = useCallback(() => {
-    toast.error('Photo access is off — enable it in Settings', {
-      actionLabel: 'Settings',
-      onAction: () => Linking.openSettings().catch(() => {}),
-    });
+    setPhotoDenied(true);
   }, []);
   const { image, pickImage } = useImagePicker({
     onPermissionDenied: handlePhotoPermissionDenied,
@@ -138,6 +160,36 @@ export default function RegisterScreen() {
 
   const password = watch('password');
 
+  // Pattern 9: the CTA stays disabled until every required field passes the
+  // same check it shows inline, and the caption under it names what's left.
+  const fullNameValue = watch('full_name');
+  const phoneValue = watch('phone');
+  const emailValue = watch('email');
+  const confirmValue = watch('confirm_password');
+  const issues = {
+    full_name: fullNameProblem(fullNameValue),
+    phone: phoneProblem(phoneValue),
+    email: emailProblem(emailValue),
+    password: newPasswordProblem(password),
+    confirm_password: confirmPasswordProblem(confirmValue, password ?? ''),
+  };
+  const values = {
+    full_name: fullNameValue,
+    phone: phoneValue,
+    email: emailValue,
+    password,
+    confirm_password: confirmValue,
+  };
+  const firstIssue = FIELD_ORDER.find((k) => issues[k]);
+  const ctaReason = firstIssue
+    ? (values[firstIssue] ?? '').length > 0
+      ? `${FIELD_LABEL[firstIssue]}: ${issues[firstIssue]}`
+      : `Add ${FIELD_TO_ADD[firstIssue]} to continue`
+    : !termsAccepted
+      ? 'Agree to the Terms of Service and Privacy Policy to continue'
+      : undefined;
+  const formReady = !firstIssue && termsAccepted;
+
   /* ── Default-address autocomplete ──
      Debounced HERE geocoding search (same pattern as the saved-addresses
      screen). Selecting a result captures coordinates so the address can
@@ -195,9 +247,9 @@ export default function RegisterScreen() {
   const onSubmit = async (data: RegisterFormData) => {
     if (!termsAccepted) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      toast.error('Please accept the Terms of Service and Privacy Policy.');
-      // Flash the checkbox row in danger so the cause is visible next to
-      // the control, then let it settle back (also cleared on toggle).
+      // Inline, next to the control (pattern 9) — not a toast. Flash the
+      // checkbox row in danger, then let it settle back (also cleared on
+      // toggle).
       setTermsError(true);
       if (termsErrorTimer.current) clearTimeout(termsErrorTimer.current);
       termsErrorTimer.current = setTimeout(() => setTermsError(false), 2500);
@@ -368,13 +420,7 @@ export default function RegisterScreen() {
                   <ChevronLeft size={22} color={LightColors.ink} strokeWidth={2.2} />
                 </Pressable>
                 <Text
-                  className="text-[11px] font-montserrat-bold uppercase mt-6 text-primary"
-                  style={{ letterSpacing: 1.8 }}
-                >
-                  Get started
-                </Text>
-                <Text
-                  className="text-[28px] font-montserrat-bold text-ink mt-2"
+                  className="text-[28px] font-montserrat-bold text-ink mt-6"
                   style={{ letterSpacing: -0.4, lineHeight: 32 }}
                   accessibilityRole="header"
                 >
@@ -419,7 +465,7 @@ export default function RegisterScreen() {
               )}
             </View>
             <Text className="text-xs font-montserrat-semi text-primary text-center mt-1">
-              {image ? 'Change Photo' : 'Add Photo'}
+              {image ? 'Change photo' : 'Add photo (optional)'}
             </Text>
           </Pressable>
 
@@ -433,13 +479,10 @@ export default function RegisterScreen() {
             <Controller
               control={control}
               name="full_name"
-              rules={{
-                required: 'Full name is required',
-                maxLength: { value: 100, message: 'Maximum 100 characters' },
-              }}
+              rules={{ validate: asRule(fullNameProblem) }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <Input
-                  label="Full Name"
+                  label="Full name"
                   value={value}
                   onChangeText={onChange}
                   onBlur={onBlur}
@@ -451,6 +494,7 @@ export default function RegisterScreen() {
                   blurOnSubmit={false}
                   onSubmitEditing={() => phoneRef.current?.focus()}
                   error={errors.full_name?.message}
+                  valid={!issues.full_name}
                 />
               )}
             />
@@ -464,19 +508,16 @@ export default function RegisterScreen() {
             <Controller
               control={control}
               name="phone"
-              rules={{
-                required: 'Phone number is required',
-                // 09…, +63 9… or 9… — sent as +639XXXXXXXXX (utils/phone).
-                validate: (value) => isPhMobile(value) || 'Enter a valid PH phone number',
-              }}
+              // 09…, +63 9… or 9… — sent as +639XXXXXXXXX (utils/phone).
+              rules={{ validate: asRule(phoneProblem) }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <Input
                   ref={phoneRef}
-                  label="Phone Number"
+                  label="Mobile number"
                   value={value}
                   onChangeText={onChange}
                   onBlur={onBlur}
-                  placeholder="09XXXXXXXXX"
+                  placeholder="0917 123 4567"
                   keyboardType="phone-pad"
                   autoComplete="tel"
                   textContentType="telephoneNumber"
@@ -484,6 +525,7 @@ export default function RegisterScreen() {
                   blurOnSubmit={false}
                   onSubmitEditing={() => emailRef.current?.focus()}
                   error={errors.phone?.message}
+                  valid={!issues.phone}
                 />
               )}
             />
@@ -497,13 +539,7 @@ export default function RegisterScreen() {
             <Controller
               control={control}
               name="email"
-              rules={{
-                required: 'Email is required',
-                pattern: {
-                  value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                  message: 'Enter a valid email',
-                },
-              }}
+              rules={{ validate: asRule(emailProblem) }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <Input
                   ref={emailRef}
@@ -520,6 +556,7 @@ export default function RegisterScreen() {
                   blurOnSubmit={false}
                   onSubmitEditing={() => passwordRef.current?.focus()}
                   error={errors.email?.message}
+                  valid={!issues.email}
                 />
               )}
             />
@@ -533,7 +570,7 @@ export default function RegisterScreen() {
             <Controller
               control={control}
               name="password"
-              rules={newPasswordRules}
+              rules={{ validate: asRule(newPasswordProblem) }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <>
                   <Input
@@ -550,6 +587,7 @@ export default function RegisterScreen() {
                     blurOnSubmit={false}
                     onSubmitEditing={() => confirmPasswordRef.current?.focus()}
                     error={errors.password?.message}
+                    valid={!issues.password}
                   />
                   <PasswordStrengthIndicator password={value} />
                 </>
@@ -565,15 +603,15 @@ export default function RegisterScreen() {
             <Controller
               control={control}
               name="confirm_password"
-              rules={confirmPasswordRules(() => password)}
+              rules={{ validate: (v: string) => confirmPasswordProblem(v, password ?? '') ?? true }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <Input
                   ref={confirmPasswordRef}
-                  label="Confirm Password"
+                  label="Confirm password"
                   value={value}
                   onChangeText={onChange}
                   onBlur={onBlur}
-                  placeholder="Confirm your password"
+                  placeholder="Type it again"
                   secureTextEntry
                   autoComplete="new-password"
                   textContentType="newPassword"
@@ -581,6 +619,7 @@ export default function RegisterScreen() {
                   blurOnSubmit={false}
                   onSubmitEditing={() => addressRef.current?.focus()}
                   error={errors.confirm_password?.message}
+                  valid={!issues.confirm_password}
                 />
               )}
             />
@@ -592,7 +631,7 @@ export default function RegisterScreen() {
             render={({ field: { onChange, onBlur, value } }) => (
               <Input
                 ref={addressRef}
-                label="Default Address (Optional)"
+                label="Home address (optional)"
                 value={value}
                 onChangeText={onChange}
                 onBlur={onBlur}
@@ -634,8 +673,8 @@ export default function RegisterScreen() {
                   accessibilityLabel={item.place_name}
                 >
                   <MapPin
-                    size={14}
-                    color={LightColors.textMuted}
+                    size={16}
+                    color={LightColors.textSecondary}
                     style={{ marginRight: 8 }}
                   />
                   <Text
@@ -651,7 +690,7 @@ export default function RegisterScreen() {
 
           {/* Terms Checkbox */}
           <Pressable
-            className="flex-row items-start mb-6"
+            className={termsError ? 'flex-row items-start mb-2' : 'flex-row items-start mb-6'}
             onLayout={(e) => {
               fieldY.current.terms = e.nativeEvent.layout.y;
             }}
@@ -703,21 +742,31 @@ export default function RegisterScreen() {
               </Text>
             </Text>
           </Pressable>
+          {termsError ? (
+            <Text
+              className="text-[12.5px] font-montserrat-semi text-dangerDark mb-5 ml-8"
+              accessibilityLiveRegion="polite"
+              accessibilityRole="alert"
+            >
+              Tick the box to agree before creating your account
+            </Text>
+          ) : null}
 
-          {/* Not disabled on unchecked terms — a dead-looking button with
-              no feedback is worse than letting onSubmit's guard explain
-              (toast + haptic + checkbox flash + scroll). */}
+          {/* Disabled until the form is valid (pattern 9) — and never
+              silently: the caption under it names what is still missing. */}
           <Button
-            title="Create Account"
+            title="Create account"
             fullWidth
             size="lg"
             loading={loading}
             loadingTitle="Creating account…"
+            disabled={!formReady}
+            disabledReason={ctaReason}
             onPress={handleSubmit(onSubmit, onInvalid)}
           />
 
           <View className="flex-row items-center justify-center mt-4 pt-2 pb-8">
-            <Text className="text-[14px] font-montserrat text-textTertiary">
+            <Text className="text-[14px] font-montserrat text-textSecondary">
               Have an account?{' '}
             </Text>
             <Pressable
@@ -736,6 +785,19 @@ export default function RegisterScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
+      <PermissionSheet
+        isVisible={photoDenied}
+        onClose={() => setPhotoDenied(false)}
+        kind="photos"
+        title="Photo access is off — enable it in Settings"
+        reason="ErrandGuy only opens your photos to attach the profile picture you pick."
+        onOpenSettings={() => {
+          setPhotoDenied(false);
+          Linking.openSettings().catch(() => {});
+        }}
+        alternativeLabel="Skip the photo for now"
+        onAlternative={() => setPhotoDenied(false)}
+      />
       <LegalModal
         visible={!!legalDoc}
         document={legalDoc ?? 'terms'}

@@ -39,7 +39,7 @@ export function AppearanceSettings() {
   const rows: ToggleRow[] = [
     {
       key: 'reduceMotion',
-      label: 'Reduce Motion',
+      label: 'Reduce motion',
       description: 'Minimize animations and transitions across the app',
       icon: Sparkles,
       value: reduceMotionOverride,
@@ -47,7 +47,7 @@ export function AppearanceSettings() {
     },
     {
       key: 'reduceHaptics',
-      label: 'Reduce Haptics',
+      label: 'Reduce haptics',
       description: 'Turn off vibration feedback on taps and confirmations',
       icon: Vibrate,
       value: reduceHaptics,

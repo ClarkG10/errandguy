@@ -219,12 +219,15 @@ export function EarningsBreakdown({ booking }: EarningsBreakdownProps) {
         b.lines.map((line) => (
           <View key={line.label} className="flex-row items-baseline justify-between py-1">
             <Text
-              className="text-[12px] font-montserrat text-textSecondary flex-1 pr-3"
+              className="text-[13px] font-montserrat text-textSecondary flex-1 pr-3"
               numberOfLines={1}
             >
               {line.label}
             </Text>
-            <Text className="text-[12px] font-inter tabular-nums text-textPrimary">
+            <Text
+              className="text-[13px] font-inter tabular-nums text-textPrimary"
+              style={{ fontVariant: ['tabular-nums'] }}
+            >
               {line.amount < 0 ? '−' : ''}
               {formatCurrency(Math.abs(line.amount))}
             </Text>
@@ -244,18 +247,21 @@ export function EarningsBreakdown({ booking }: EarningsBreakdownProps) {
           style={{ borderTopWidth: 1, borderTopColor: LightColors.divider }}
         >
           <Text className="text-[12px] font-montserrat-bold text-textPrimary">Your payout</Text>
-          <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
+          <Text
+            className="text-[15px] font-inter-semi tabular-nums text-textPrimary"
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
             {formatCurrency(b.payout)}
           </Text>
         </View>
       )}
 
       {b.feeNote && (
-        <Text className="text-[11px] font-montserrat text-textTertiary mt-2">{b.feeNote}</Text>
+        <Text className="text-[12px] font-montserrat text-textSecondary mt-2">{b.feeNote}</Text>
       )}
 
       {b.settlementNote && (
-        <Text className="text-[11px] font-montserrat text-textTertiary mt-1">
+        <Text className="text-[12px] font-montserrat text-textSecondary mt-1">
           {b.settlementNote}
         </Text>
       )}

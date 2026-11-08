@@ -20,21 +20,10 @@ import {
   Check,
   Upload,
 } from 'lucide-react-native';
-import { toast } from '../../stores/toastStore';
 import { Spinner } from './Spinner';
+import { PermissionPrompt } from './PermissionSheet';
 import { LightColors } from '../../constants/colors';
-
-// Permission denial must never be a silent no-op — once the OS
-// permanently denies, the only recovery is the system Settings page,
-// so the toast carries a direct route there.
-function toastPermissionDenied(message: string) {
-  toast.error(message, {
-    actionLabel: 'Settings',
-    onAction: () => {
-      Linking.openSettings().catch(() => {});
-    },
-  });
-}
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 
 // Preview size is computed inside the component now (was a module-level
 // const) so rotating an iPad or resizing iOS split view re-flows the
@@ -55,13 +44,16 @@ interface ImagePickerModalProps {
   uploading?: boolean;
 }
 
-type Stage = 'pick' | 'preview';
+// 'camera-denied' / 'gallery-denied': pattern 7 — the sheet says why it needs
+// the permission, offers Allow in Settings (the only recovery once the OS
+// stops asking) and the other source as the alternative. Never a silent no-op.
+type Stage = 'pick' | 'preview' | 'camera-denied' | 'gallery-denied';
 
 export function ImagePickerModal({
   visible,
   onClose,
   onConfirm,
-  title = 'Upload Photo',
+  title = 'Upload photo',
   subtitle,
   uploading = false,
 }: ImagePickerModalProps) {
@@ -69,6 +61,7 @@ export function ImagePickerModal({
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const { width: SCREEN_WIDTH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const reduceMotion = useReducedMotion();
   // Cap at 320 so the preview tile never bloats on a tablet or
   // landscape-oriented phone; floor at 220 so it stays usable on
   // narrow phones in a split-view shell.
@@ -88,7 +81,7 @@ export function ImagePickerModal({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
-      toastPermissionDenied('Camera access is needed to take photos');
+      setStage('camera-denied');
       return;
     }
 
@@ -108,7 +101,7 @@ export function ImagePickerModal({
     const { status } =
       await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      toastPermissionDenied('Photo library access is needed to choose a photo');
+      setStage('gallery-denied');
       return;
     }
 
@@ -152,15 +145,23 @@ export function ImagePickerModal({
       >
         <Pressable onPress={(e) => e.stopPropagation()}>
           <MotiView
-            from={{ translateY: 400, opacity: 0 }}
+            from={{ translateY: reduceMotion ? 0 : 400, opacity: 0 }}
             animate={{ translateY: 0, opacity: 1 }}
-            exit={{ translateY: 400, opacity: 0 }}
-            transition={{ type: 'timing', duration: 240 }}
-            className="bg-surface rounded-t-3xl overflow-hidden"
-            // Sheet floor tracks the home-indicator inset instead of a flat
-            // 48pt — comfortable clearance on gesture-nav devices, no dead
-            // band on 0-inset (button-nav / notch-less) hardware.
-            style={{ paddingBottom: Math.max(insets.bottom + 8, 28) }}
+            exit={{ translateY: reduceMotion ? 0 : 400, opacity: 0 }}
+            transition={{ type: 'timing', duration: reduceMotion ? 120 : 240 }}
+            // Fill, corners and clipping in `style`: NativeWind drops
+            // className on MotiView (a Reanimated component), so the sheet
+            // rendered with no background.
+            style={{
+              backgroundColor: LightColors.surface,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              overflow: 'hidden',
+              // Sheet floor tracks the home-indicator inset instead of a flat
+              // 48pt — comfortable clearance on gesture-nav devices, no dead
+              // band on 0-inset (button-nav / notch-less) hardware.
+              paddingBottom: Math.max(insets.bottom + 8, 28),
+            }}
           >
             {/* Handle bar */}
             <View className="items-center pt-3 pb-1">
@@ -174,7 +175,7 @@ export function ImagePickerModal({
                   {title}
                 </Text>
                 {subtitle && (
-                  <Text className="text-sm font-montserrat text-textTertiary mt-1">
+                  <Text className="text-sm font-montserrat text-textSecondary mt-1">
                     {subtitle}
                   </Text>
                 )}
@@ -187,7 +188,7 @@ export function ImagePickerModal({
                 accessibilityRole="button"
                 accessibilityLabel="Close"
               >
-                <X size={18} color={LightColors.textTertiary} />
+                <X size={20} color={LightColors.textSecondary} />
               </Pressable>
             </View>
 
@@ -202,18 +203,25 @@ export function ImagePickerModal({
                   className="flex-row items-center gap-4 py-4 px-5 mb-3 rounded-2xl bg-primary/5 active:bg-primary/10"
                 >
                   <MotiView
-                    from={{ scale: 0.8, opacity: 0 }}
+                    from={{ scale: reduceMotion ? 1 : 0.8, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
-                    transition={{ type: 'spring', delay: 100 }}
-                    className="w-14 h-14 rounded-2xl bg-primary items-center justify-center"
+                    transition={reduceMotion ? { type: 'timing', duration: 0 } : { type: 'spring', delay: 100 }}
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 16,
+                      backgroundColor: LightColors.primary,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
                   >
-                    <Camera size={26} color={LightColors.textInverse} />
+                    <Camera size={24} color={LightColors.textInverse} />
                   </MotiView>
                   <View className="flex-1">
                     <Text className="text-base font-montserrat-semi text-textPrimary">
-                      Take a Photo
+                      Take a photo
                     </Text>
-                    <Text className="text-xs font-montserrat text-textTertiary mt-0.5">
+                    <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
                       Use your camera to capture now
                     </Text>
                   </View>
@@ -227,32 +235,61 @@ export function ImagePickerModal({
                   className="flex-row items-center gap-4 py-4 px-5 rounded-2xl bg-primary/5 active:bg-primary/10"
                 >
                   <MotiView
-                    from={{ scale: 0.8, opacity: 0 }}
+                    from={{ scale: reduceMotion ? 1 : 0.8, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
-                    transition={{ type: 'spring', delay: 200 }}
-                    className="w-14 h-14 rounded-2xl bg-primary400 items-center justify-center"
+                    transition={reduceMotion ? { type: 'timing', duration: 0 } : { type: 'spring', delay: 200 }}
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 16,
+                      backgroundColor: LightColors.primary400,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
                   >
-                    <ImageIcon size={26} color={LightColors.textInverse} />
+                    <ImageIcon size={24} color={LightColors.textInverse} />
                   </MotiView>
                   <View className="flex-1">
                     <Text className="text-base font-montserrat-semi text-textPrimary">
-                      Choose from Gallery
+                      Choose from gallery
                     </Text>
-                    <Text className="text-xs font-montserrat text-textTertiary mt-0.5">
+                    <Text className="text-xs font-montserrat text-textSecondary mt-0.5">
                       Select an existing photo from your library
                     </Text>
                   </View>
                 </Pressable>
               </View>
+            ) : stage === 'camera-denied' || stage === 'gallery-denied' ? (
+              /* ─── Permission refused ─── */
+              <View className="px-6 pb-4">
+                <PermissionPrompt
+                  kind={stage === 'camera-denied' ? 'camera' : 'photos'}
+                  onOpenSettings={() => {
+                    Linking.openSettings().catch(() => {});
+                  }}
+                  alternativeLabel={
+                    stage === 'camera-denied' ? 'Choose from gallery instead' : 'Take a photo instead'
+                  }
+                  onAlternative={() => {
+                    const next = stage === 'camera-denied' ? handleGallery : handleCamera;
+                    setStage('pick');
+                    void next();
+                  }}
+                />
+              </View>
             ) : (
               /* ─── Preview stage ─── */
               <View className="items-center px-6 pb-4">
                 <MotiView
-                  from={{ scale: 0.9, opacity: 0 }}
+                  from={{ scale: reduceMotion ? 1 : 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  transition={{ type: 'spring', damping: 22, stiffness: 220 }}
-                  className="rounded-2xl overflow-hidden mb-5"
+                  transition={
+                    reduceMotion ? { type: 'timing', duration: 0 } : { type: 'spring', damping: 22, stiffness: 220 }
+                  }
                   style={{
+                    borderRadius: 16,
+                    overflow: 'hidden',
+                    marginBottom: 20,
                     width: PREVIEW_SIZE,
                     height: PREVIEW_SIZE,
                     shadowColor: LightColors.ink,
@@ -289,7 +326,7 @@ export function ImagePickerModal({
                     accessibilityState={{ disabled: uploading }}
                     className="flex-1 flex-row items-center justify-center gap-2 py-4 rounded-2xl bg-surfaceMuted active:bg-divider"
                   >
-                    <RotateCcw size={18} color={LightColors.textTertiary} />
+                    <RotateCcw size={20} color={LightColors.textSecondary} />
                     <Text className="text-sm font-montserrat-semi text-textSecondary">
                       Retake
                     </Text>
@@ -305,10 +342,10 @@ export function ImagePickerModal({
                     {uploading ? (
                       <Spinner kind="brand" size="small" color={LightColors.textInverse} />
                     ) : (
-                      <Check size={18} color={LightColors.textInverse} />
+                      <Check size={20} color={LightColors.textInverse} />
                     )}
                     <Text className="text-sm font-montserrat-semi text-white">
-                      {uploading ? 'Uploading…' : 'Use Photo'}
+                      {uploading ? 'Uploading…' : 'Use photo'}
                     </Text>
                   </Pressable>
                 </View>

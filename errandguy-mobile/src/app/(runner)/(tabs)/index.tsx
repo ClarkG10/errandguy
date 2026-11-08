@@ -58,6 +58,8 @@ import { Button } from '../../../components/ui/Button';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { Illustration } from '../../../components/ui/Illustration';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
+import { PermissionSheet } from '../../../components/ui/PermissionSheet';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import {
   useLocationStore,
@@ -257,6 +259,12 @@ export default function RunnerHomeScreen() {
 
   const [togglingOnline, setTogglingOnline] = useState(false);
   const [locationGranted, setLocationGranted] = useState<boolean | null>(null);
+  // False once the OS will no longer show its dialog — the only way back is
+  // the Settings app, so the nudge offers that directly.
+  const [locationCanAsk, setLocationCanAsk] = useState(true);
+  // Pattern 7: a permission the OS won't ask for again gets the owner's sheet
+  // (why, Allow in Settings, Not now) before the runner leaves for Settings.
+  const [permissionSheet, setPermissionSheet] = useState<'location' | 'notifications' | null>(null);
   /** What the shift just ended came to. Null = nothing to show. */
   const [shiftSummary, setShiftSummary] = useState<ShiftSummary | null>(null);
 
@@ -284,8 +292,9 @@ export default function RunnerHomeScreen() {
 
   const checkLocationPermission = useCallback(async () => {
     try {
-      const { status } = await Location.getForegroundPermissionsAsync();
+      const { status, canAskAgain } = await Location.getForegroundPermissionsAsync();
       setLocationGranted(status === 'granted');
+      setLocationCanAsk(canAskAgain !== false);
     } catch {
       setLocationGranted(false);
     }
@@ -293,6 +302,12 @@ export default function RunnerHomeScreen() {
 
   useEffect(() => {
     checkLocationPermission();
+    // Coming back from the Settings app is how a denied permission gets
+    // granted — re-read it so the nudge clears without a pull-to-refresh.
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void checkLocationPermission();
+    });
+    return () => sub.remove();
   }, [checkLocationPermission]);
 
   const userId = user?.id ?? 'anon';
@@ -877,9 +892,7 @@ export default function RunnerHomeScreen() {
               'You\u2019re online, but notifications are off \u2014 you won\u2019t be told about new errands.',
               {
                 actionLabel: 'Turn on',
-                onAction: () => {
-                  Linking.openSettings().catch(() => {});
-                },
+                onAction: () => setPermissionSheet('notifications'),
               },
             );
           } else {
@@ -1041,6 +1054,18 @@ export default function RunnerHomeScreen() {
     return (
       <View className="flex-1 bg-background">
         <RunnerHomeSkeleton />
+        {/* Pattern 5: past ~4s, say it's the connection, not a frozen app. */}
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            left: 20,
+            right: 20,
+            bottom: TAB_CONTENT_BOTTOM_INSET_RUNNER,
+          }}
+        >
+          <SlowNetworkNotice loading={initialLoading} onRetry={onRefresh} />
+        </View>
       </View>
     );
   }
@@ -1255,7 +1280,7 @@ export default function RunnerHomeScreen() {
                         </Text>
                         <Text
                           className="font-inter-semi tabular-nums text-white mt-1"
-                          style={{ fontSize: 38, lineHeight: 44, letterSpacing: -1 }}
+                          style={{ fontSize: 38, lineHeight: 44, letterSpacing: -1, fontVariant: ['tabular-nums'] }}
                           numberOfLines={1}
                           adjustsFontSizeToFit
                           minimumFontScale={0.7}
@@ -1263,7 +1288,7 @@ export default function RunnerHomeScreen() {
                           {formatCurrency(todayEarnings)}
                         </Text>
                         {updatedLabel ? (
-                          <Text className="text-[10px] font-montserrat text-white/60 mt-0.5">
+                          <Text className="text-[11px] font-montserrat text-white/80 mt-0.5">
                             {updatedLabel}
                           </Text>
                         ) : null}
@@ -1360,10 +1385,10 @@ export default function RunnerHomeScreen() {
                     </View>
                     {canGoOnline ? (
                       <Text
-                        className="text-[11px] font-montserrat-bold text-white mt-1.5"
-                        style={{ letterSpacing: 1 }}
+                        className="text-[12px] font-montserrat-bold text-white mt-1.5 text-center"
+                        numberOfLines={1}
                       >
-                        {isOnline ? 'ONLINE' : 'GO'}
+                        {isOnline ? 'Online' : 'Go online'}
                       </Text>
                     ) : null}
                   </View>
@@ -1426,13 +1451,13 @@ export default function RunnerHomeScreen() {
                 ) : (
                   <Pressable
                     onPress={openGoalModal}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    hitSlop={{ top: 14, bottom: 14, left: 8, right: 8 }}
                     accessibilityRole="button"
                     accessibilityLabel="Set a daily goal"
-                    className="flex-row items-center mt-4"
+                    className="flex-row items-center self-start mt-4"
                   >
-                    <Pencil size={12} color={LightColors.textInverse} strokeWidth={2} />
-                    <Text className="text-[11px] font-montserrat-bold text-white ml-1.5 underline">
+                    <Pencil size={14} color={LightColors.textInverse} strokeWidth={2} />
+                    <Text className="text-[12px] font-montserrat-bold text-white ml-1.5 underline">
                       Set a daily goal
                     </Text>
                   </Pressable>
@@ -1517,8 +1542,8 @@ export default function RunnerHomeScreen() {
         {!canGoOnline && (
           <View className="px-5 mb-2">
             <Text
-              className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2"
-              style={{ letterSpacing: 1.4 }}
+              className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-2"
+              style={{ letterSpacing: 1.2 }}
             >
               Before your first shift
             </Text>
@@ -1537,19 +1562,19 @@ export default function RunnerHomeScreen() {
                   }
                 >
                   {step.done ? (
-                    <CheckCircle2 size={18} color={LightColors.success} strokeWidth={2.2} />
+                    <CheckCircle2 size={20} color={LightColors.success} strokeWidth={2.2} />
                   ) : (
-                    <Circle size={18} color={LightColors.textMuted} strokeWidth={2} />
+                    <Circle size={20} color={LightColors.textMuted} strokeWidth={2} />
                   )}
                   <View className="flex-1 ml-3">
-                    <Text className="text-[13px] font-montserrat-bold text-textPrimary">
+                    <Text className="text-[14px] font-montserrat-bold text-textPrimary">
                       {step.label}
                     </Text>
-                    <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                    <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5">
                       {step.hint}
                     </Text>
                   </View>
-                  <ChevronRight size={14} color={LightColors.textMuted} />
+                  <ChevronRight size={16} color={LightColors.textSecondary} />
                 </Pressable>
               ))}
             </View>
@@ -1579,8 +1604,8 @@ export default function RunnerHomeScreen() {
               </Text>
             </View>
             <Text
-              className="text-[11px] font-montserrat text-textSecondary"
-              style={{ lineHeight: 16 }}
+              className="text-[12px] font-montserrat text-textSecondary"
+              style={{ lineHeight: 17 }}
               maxFontSizeMultiplier={1.3}
             >
               {cashDebtBlock.message}
@@ -1604,8 +1629,8 @@ export default function RunnerHomeScreen() {
               </Text>
             </View>
             <Text
-              className="text-[11px] font-montserrat text-textSecondary"
-              style={{ lineHeight: 16 }}
+              className="text-[12px] font-montserrat text-textSecondary"
+              style={{ lineHeight: 17 }}
               maxFontSizeMultiplier={1.3}
             >
               {cashDebtWarning.message}
@@ -1618,30 +1643,33 @@ export default function RunnerHomeScreen() {
         {canGoOnline && locationGranted === false && (
           <View className="mx-5 -mt-3 mb-4 bg-warning/10 border border-warning/30 rounded-2xl px-4 py-3 flex-row items-center">
             <View className="flex-1 mr-3">
-              <Text className="text-[12px] font-montserrat-bold text-warningDark">
+              <Text className="text-[13px] font-montserrat-bold text-warningDark">
                 Turn on location
               </Text>
-              <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+              <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5">
                 Without it you can&apos;t go online or get errands.
               </Text>
             </View>
             <Pressable
               onPress={async () => {
+                if (!locationCanAsk) {
+                  // The OS won't ask again: the sheet says why, then sends
+                  // them to Settings. The AppState listener re-checks when
+                  // they come back.
+                  setPermissionSheet('location');
+                  return;
+                }
                 const ok = await ensureLocationPermission({ feature: 'go online and receive errands' });
                 setLocationGranted(ok);
+                if (!ok) void checkLocationPermission();
               }}
               accessibilityRole="button"
               accessibilityLabel="Enable location"
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              className="px-3 rounded-xl bg-warningDark items-center justify-center"
-              style={({ pressed }) => ({
-                minHeight: 36,
-                opacity: pressed ? 0.85 : 1,
-              })}
+              hitSlop={{ top: 4, bottom: 4, left: 8, right: 8 }}
+              className="px-3.5 rounded-xl bg-warningDark items-center justify-center active:opacity-80"
+              style={{ minHeight: 44 }}
             >
-              <Text className="text-[11px] font-montserrat-bold text-white">
-                Enable
-              </Text>
+              <Text className="text-[13px] font-montserrat-bold text-white">Turn on</Text>
             </Pressable>
           </View>
         )}
@@ -1704,7 +1732,7 @@ export default function RunnerHomeScreen() {
             <Text className="text-[15px] font-montserrat-bold text-textPrimary mt-4">
               {isOnline ? 'Waiting for requests' : "You're offline"}
             </Text>
-            <Text className="text-[12px] font-montserrat text-textSecondary mt-1 text-center px-6">
+            <Text className="text-[13px] font-montserrat text-textSecondary mt-1 text-center px-6" style={{ lineHeight: 19 }}>
               {isOnline
                 ? 'Sit tight — we’ll ping you the moment a nearby errand comes in.'
                 : 'Tap the power button above to start receiving errands.'}
@@ -1716,7 +1744,7 @@ export default function RunnerHomeScreen() {
                 shift. Only promises the push while notifications are actually
                 allowed. */}
             {isOnline ? (
-              <Text className="text-[11px] font-montserrat text-textTertiary mt-2 text-center px-6">
+              <Text className="text-[12px] font-montserrat text-textSecondary mt-2 text-center px-6" style={{ lineHeight: 17 }}>
                 {pushDenied
                   ? 'Notifications are off, so offers only reach you while ErrandGuy is open.'
                   : 'With your phone locked, offers still arrive as notifications for about 15 minutes.'}{' '}
@@ -1769,8 +1797,8 @@ export default function RunnerHomeScreen() {
             so the screen has rhythm without another card. */}
         <View className="px-5 pt-6">
           <Text
-            className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-2"
-            style={{ letterSpacing: 1.4 }}
+            className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-2"
+            style={{ letterSpacing: 1.2 }}
           >
             Lifetime
           </Text>
@@ -1780,39 +1808,33 @@ export default function RunnerHomeScreen() {
           <View className="flex-row py-4 border-y border-divider">
             <View className="flex-1 items-center">
               <Text
-                className="text-[20px] font-inter-semi tabular-nums text-textPrimary"
-                style={{ letterSpacing: -0.3 }}
+                className="text-[22px] font-inter-semi tabular-nums text-textPrimary"
+                style={{ letterSpacing: -0.3, fontVariant: ['tabular-nums'] }}
               >
                 {runnerProfile?.total_errands ?? 0}
               </Text>
-              <Text
-                className="text-[10px] font-montserrat uppercase text-textSecondary mt-1"
-                style={{ letterSpacing: 1 }}
-              >
-                Errands
+              <Text className="text-[12px] font-montserrat text-textSecondary mt-1">
+                Errands done
               </Text>
             </View>
             <View className="w-px bg-divider" />
             <View className="flex-1 items-center">
               <View className="flex-row items-center">
                 <Text
-                  className="text-[20px] font-inter-semi tabular-nums text-textPrimary"
-                  style={{ letterSpacing: -0.3 }}
+                  className="text-[22px] font-inter-semi tabular-nums text-textPrimary"
+                  style={{ letterSpacing: -0.3, fontVariant: ['tabular-nums'] }}
                 >
                   {/* 'New', not a demoralising 0.0, before the first review. */}
                   {formatRating(user?.avg_rating, user?.total_ratings).label}
                 </Text>
                 <Star
-                  size={13}
+                  size={16}
                   color={LightColors.accentStrong}
                   fill={LightColors.accentStrong}
                   style={{ marginLeft: 4 }}
                 />
               </View>
-              <Text
-                className="text-[10px] font-montserrat uppercase text-textSecondary mt-1"
-                style={{ letterSpacing: 1 }}
-              >
+              <Text className="text-[12px] font-montserrat text-textSecondary mt-1">
                 Rating
               </Text>
             </View>
@@ -1823,8 +1845,8 @@ export default function RunnerHomeScreen() {
         {/* Shortcuts — 2x2 grid */}
         <View className="px-5 pt-6">
           <Text
-            className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-3"
-            style={{ letterSpacing: 1.4 }}
+            className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-3"
+            style={{ letterSpacing: 1.2 }}
           >
             Shortcuts
           </Text>
@@ -1850,18 +1872,20 @@ export default function RunnerHomeScreen() {
                   }}
                   accessibilityRole="button"
                   accessibilityLabel={label}
-                  className="bg-surface px-4 py-4 rounded-2xl border border-divider flex-row items-center"
+                  className="bg-surface px-3.5 py-3.5 rounded-2xl border border-divider flex-row items-center active:opacity-80"
+                  style={{ minHeight: 64 }}
                 >
-                  <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
-                    <Icon size={18} color={LightColors.primary} strokeWidth={1.8} />
+                  <View className="w-9 h-9 rounded-full bg-primary50 items-center justify-center mr-3">
+                    <Icon size={20} color={LightColors.primary} strokeWidth={1.8} />
                   </View>
+                  {/* Two lines rather than "Errand ty…" — no chevron in a tile;
+                      the whole tile is the button. */}
                   <Text
-                    className="flex-1 text-[13px] font-montserrat-bold text-textPrimary"
-                    numberOfLines={1}
+                    className="flex-1 text-[14px] font-montserrat-bold text-textPrimary"
+                    numberOfLines={2}
                   >
                     {label}
                   </Text>
-                  <ChevronRight size={14} color={LightColors.textMuted} />
                 </Pressable>
               </View>
             ))}
@@ -1873,18 +1897,18 @@ export default function RunnerHomeScreen() {
           <View className="px-5 pt-4">
             <View className="flex-row items-baseline justify-between mb-1">
               <Text
-                className="text-[10px] font-montserrat-bold uppercase text-textSecondary"
-                style={{ letterSpacing: 1.4 }}
+                className="text-[11px] font-montserrat-bold uppercase text-textSecondary"
+                style={{ letterSpacing: 1.2 }}
               >
                 Recent
               </Text>
               <Pressable
                 onPress={() => router.push('/(runner)/(tabs)/history' as any)}
-                hitSlop={8}
+                hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
                 accessibilityRole="button"
                 accessibilityLabel="See all errands"
               >
-                <Text className="text-[11px] font-montserrat-bold text-primary underline">
+                <Text className="text-[13px] font-montserrat-bold text-primary">
                   See all
                 </Text>
               </Pressable>
@@ -1917,7 +1941,10 @@ export default function RunnerHomeScreen() {
                     {errand.errand_type?.name ?? 'Errand'}
                   </Text>
                   {errand.status === 'cancelled' || formatDistanceKm(errand.distance_km) ? (
-                    <Text className="text-[11px] font-inter tabular-nums text-textSecondary mt-0.5">
+                    <Text
+                      className="text-[12px] font-inter tabular-nums text-textSecondary mt-0.5"
+                      style={{ fontVariant: ['tabular-nums'] }}
+                    >
                       {[
                         errand.status === 'cancelled' ? 'Cancelled' : null,
                         formatDistanceKm(errand.distance_km),
@@ -1929,7 +1956,10 @@ export default function RunnerHomeScreen() {
                 </View>
                 {/* What it actually paid: a cancelled errand shows its
                     cancellation fee (or ₱0.00), never the would-be payout. */}
-                <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
+                <Text
+                  className="text-[15px] font-inter-semi tabular-nums text-textPrimary"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   {earnedLabel(errand)}
                 </Text>
                 <ChevronRight size={16} color={LightColors.textMuted} style={{ marginLeft: 8 }} />
@@ -1947,6 +1977,22 @@ export default function RunnerHomeScreen() {
           tab and work out which rows belonged to the hours they'd just
           worked. */}
       <ShiftSummarySheet shift={shiftSummary} onClose={() => setShiftSummary(null)} />
+
+      {/* Permission denied for good (pattern 7). */}
+      <PermissionSheet
+        isVisible={permissionSheet !== null}
+        onClose={() => setPermissionSheet(null)}
+        kind={permissionSheet ?? 'location'}
+        reason={
+          permissionSheet === 'notifications'
+            ? 'New offers reach a locked phone only as notifications — without them, keep ErrandGuy open while you’re online.'
+            : 'ErrandGuy uses your location while you’re online to send you nearby errands and show customers where their runner is.'
+        }
+        onOpenSettings={() => {
+          setPermissionSheet(null);
+          Linking.openSettings().catch(() => {});
+        }}
+      />
 
       {/* Daily goal editor — bottom sheet, mirrors the delete-account
           modal language elsewhere in the app. */}
@@ -1975,7 +2021,7 @@ export default function RunnerHomeScreen() {
               <Text className="text-base font-montserrat-bold text-textPrimary mb-1">
                 {dailyGoal ? 'Edit daily goal' : 'Set a daily goal'}
               </Text>
-              <Text className="text-sm font-montserrat text-textTertiary mb-5">
+              <Text className="text-sm font-montserrat text-textSecondary mb-5">
                 We&apos;ll show your progress toward this on your dashboard each day.
               </Text>
               <Text className="text-xs font-montserrat-bold text-textSecondary mb-2">
@@ -2020,7 +2066,7 @@ export default function RunnerHomeScreen() {
                 accessibilityLabel="Cancel"
                 onPress={() => setGoalModalVisible(false)}
               >
-                <Text className="text-sm font-montserrat-bold text-textTertiary">
+                <Text className="text-sm font-montserrat-bold text-textSecondary">
                   Cancel
                 </Text>
               </Pressable>

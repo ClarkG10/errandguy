@@ -20,7 +20,9 @@ import { LightColors, Elevation } from '../../constants/colors';
  *   • Terminal states get first-class treatment: COMPLETED fills green with a
  *     check on the final bead; CANCELLED greys the whole path with a red stop
  *     (X) at the end, so it reads "journey ended", never "completed".
- *   • A glanceable counter ("03 / 06", or DONE / ENDED) sits at the right end.
+ *   • The outcome ("Done" / "Ended") sits at the right end on terminal states.
+ *     Mid-journey there's no "03 / 06" counter — it said what the beads
+ *     already show — but screen readers still hear "Step 3 of 6: En route".
  *
  * Performance discipline is preserved from the original: the only animation
  * is a NATIVE-driver opacity pulse on the active halo — no layout animation,
@@ -139,10 +141,15 @@ export function JourneyBeads({ status, accent, onPress, showLabel = true }: Jour
   const activePhase = PHASES[activeIdx];
   const fillPct = (activeIdx / (total - 1)) * 100;
   const counter = useMemo(() => {
-    if (isCancelled) return 'ENDED';
-    if (isComplete) return 'DONE';
-    return `${String(activeIdx + 1).padStart(2, '0')} / ${String(total).padStart(2, '0')}`;
-  }, [activeIdx, total, isCancelled, isComplete]);
+    if (isCancelled) return 'Ended';
+    if (isComplete) return 'Done';
+    return null;
+  }, [isCancelled, isComplete]);
+  const spoken = isCancelled
+    ? 'Errand ended'
+    : isComplete
+      ? 'Errand done'
+      : `Step ${activeIdx + 1} of ${total}: ${activePhase.short}`;
 
   const Wrapper: React.ComponentType<{ children: React.ReactNode }> = ({ children }) =>
     onPress ? (
@@ -155,7 +162,7 @@ export function JourneyBeads({ status, accent, onPress, showLabel = true }: Jour
 
   return (
     <Wrapper>
-      <View className="px-1 pt-1 pb-1.5">
+      <View className="px-1 pt-1 pb-1.5" accessible accessibilityLabel={spoken}>
         <View className="flex-row items-center">
           <View className="flex-1">
             <View className="relative justify-center" style={{ height: TRACK_HEIGHT }}>
@@ -287,18 +294,16 @@ export function JourneyBeads({ status, accent, onPress, showLabel = true }: Jour
             </View>
           </View>
 
-          {/* Counter — typographic, tabular so it never shifts width. */}
-          <Text
-            className="ml-3 text-[11px] font-montserrat-bold"
-            style={{
-              letterSpacing: 1,
-              fontVariant: ['tabular-nums'],
-              color: isTerminal ? activeColor : LightColors.textSecondary,
-            }}
-            maxFontSizeMultiplier={1.3}
-          >
-            {counter}
-          </Text>
+          {/* Outcome — terminal states only. */}
+          {counter ? (
+            <Text
+              className="ml-3 text-[12px] font-montserrat-bold"
+              style={{ color: activeColor }}
+              maxFontSizeMultiplier={1.3}
+            >
+              {counter}
+            </Text>
+          ) : null}
         </View>
 
         {/* Active-phase caption — anchored roughly under its own bead. Hidden on

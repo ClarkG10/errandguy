@@ -1,22 +1,26 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, type ViewStyle } from 'react-native';
-import { AlertCircle, CloudOff, RefreshCw } from 'lucide-react-native';
+import { View, Text, StyleSheet, type ViewStyle } from 'react-native';
+import { AlertTriangle, WifiOff, RefreshCw } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Button } from './Button';
-import { Illustration } from './Illustration';
 import { LightColors } from '../../constants/colors';
+import { Radius } from '../../constants/radius';
 import { describeError } from '../../utils/errorCatalog';
 
 /** Said when nothing more specific is known — it blames nobody. */
 const NEUTRAL_DESCRIPTION = 'Please try again.';
+const DEFAULT_TITLE = "Couldn't load this";
 
 interface ErrorStateProps {
-  /** Lucide icon. Defaults to CloudOff, or AlertCircle when `error` shows
-   *  the failure wasn't the connection. */
+  /** Lucide icon. Defaults to WifiOff for a connection failure, otherwise
+   *  AlertTriangle. */
   icon?: LucideIcon;
-  /** Full-layout illustration. Defaults to the error-generic artwork;
-   *  pass null to fall back to the halo + icon. Ignored in compact mode. */
+  /** Optional artwork above the error card. None by default — the tinted
+   *  card carries the state. Ignored in compact mode. */
   illustration?: React.ReactNode | null;
+  /** What went wrong. Defaults to the catalogued title for `error`
+   *  ("You're offline", "Something went wrong on our end"…), else
+   *  "Couldn't load this". */
   title?: string;
   /** Explicit copy. Wins over `error`. */
   description?: string;
@@ -30,8 +34,8 @@ interface ErrorStateProps {
   onRetry?: () => void;
   /** Label for the retry button. Defaults to "Retry". */
   retryLabel?: string;
-  /** A quiet link under Retry — a way out that doesn't depend on Retry ever
-   *  working (e.g. "Go to Home"). Same as EmptyState's. Full layout only. */
+  /** An outline button under Retry — a way out that doesn't depend on Retry
+   *  ever working (e.g. "Go to Home"). Same as EmptyState's. Full layout only. */
   secondaryActionLabel?: string;
   onSecondaryAction?: () => void;
   /** Compact horizontal layout for embedding inside cards / list slots
@@ -42,22 +46,25 @@ interface ErrorStateProps {
 }
 
 /**
- * Inline error block for failed loads — the sibling of EmptyState.
+ * Pattern 3 (error) — the sibling of EmptyState.
  *
  * EmptyState says "there's nothing here (yet)"; ErrorState says "there
- * should be something here but we couldn't fetch it". Uses the same
- * halo + disc language as EmptyState but tinted with the danger ramp so
- * the two states are never confused at a glance.
+ * should be something here but we couldn't fetch it". It says what went
+ * wrong (title), whose fault it is and how to fix it (the catalogued
+ * description), then offers Retry as the one primary action and an outline
+ * way out. A red-tinted card with a warning icon, so the two states are never
+ * confused at a glance.
  *
  * Two layouts:
- *  - default  — full-flex centered block for whole-screen failures.
- *  - compact  — one-line row (icon chip + copy + retry) for embedding
- *               inside a Card or a list section that partially loaded.
+ *  - default  — the tinted card + full-width actions, centred, for
+ *               whole-screen failures.
+ *  - compact  — a tinted row (icon + copy + retry) for embedding inside a
+ *               Card or a list section that partially loaded.
  */
 export function ErrorState({
   icon,
-  illustration = <Illustration name="error-generic" size={168} />,
-  title = "Couldn't load this",
+  illustration = null,
+  title: titleProp,
   description: descriptionProp,
   error,
   onRetry,
@@ -77,37 +84,22 @@ export function ErrorState({
     error != null && typeof error === 'object' && ('kind' in error || 'status' in error)
       ? (error as { kind?: string })
       : null;
-  const description =
-    descriptionProp ?? (apiError ? describeError(apiError).message : NEUTRAL_DESCRIPTION);
-  const Icon =
-    icon ??
-    (apiError && apiError.kind !== 'offline' && apiError.kind !== 'timeout'
-      ? AlertCircle
-      : CloudOff);
+  const described = apiError ? describeError(apiError) : null;
+  const title = titleProp ?? described?.title ?? DEFAULT_TITLE;
+  const description = descriptionProp ?? described?.message ?? NEUTRAL_DESCRIPTION;
+  const isConnection = apiError?.kind === 'offline';
+  const Icon = icon ?? (isConnection ? WifiOff : AlertTriangle);
 
   if (compact) {
     return (
       <View style={[s.compactRow, style]} testID={testID}>
-        <View style={s.compactChip}>
-          <Icon size={18} color={LightColors.danger} strokeWidth={1.9} />
-        </View>
+        <Icon size={20} color={LightColors.dangerDark} strokeWidth={2} style={s.compactIcon} />
         <View style={s.compactCopy}>
-          <Text style={s.compactTitle} numberOfLines={1}>
-            {title}
-          </Text>
-          {description ? (
-            <Text style={s.compactDescription} numberOfLines={2}>
-              {description}
-            </Text>
-          ) : null}
+          <Text style={s.compactTitle}>{title}</Text>
+          {description ? <Text style={s.compactDescription}>{description}</Text> : null}
         </View>
         {onRetry ? (
-          <Button
-            title={retryLabel}
-            onPress={onRetry}
-            variant="secondary"
-            size="sm"
-          />
+          <Button title={retryLabel} onPress={onRetry} variant="outline" size="sm" />
         ) : null}
       </View>
     );
@@ -115,43 +107,41 @@ export function ErrorState({
 
   return (
     <View style={[s.wrap, style]} testID={testID}>
-      {illustration ? (
-        <View style={{ marginBottom: 2 }}>{illustration}</View>
-      ) : (
-        // Fallback: halo + icon when illustration is explicitly nulled.
-        <View style={s.halo}>
-          <View style={s.disc}>
-            <Icon size={30} color={LightColors.danger} strokeWidth={1.9} />
+      <View style={s.column}>
+        {illustration ? <View style={s.illustration}>{illustration}</View> : null}
+        <View style={s.card} accessibilityRole="alert">
+          <View style={s.cardHead}>
+            <Icon size={20} color={LightColors.dangerDark} strokeWidth={2} />
+            <Text style={s.title} accessibilityRole="header">
+              {title}
+            </Text>
           </View>
+          {description ? <Text style={s.description}>{description}</Text> : null}
         </View>
-      )}
-      <Text style={s.title}>{title}</Text>
-      {description ? <Text style={s.description}>{description}</Text> : null}
-      {onRetry ? (
-        <View style={{ marginTop: 20 }}>
-          <Button
-            title={retryLabel}
-            onPress={onRetry}
-            variant="secondary"
-            size="md"
-            icon={RefreshCw}
-          />
-        </View>
-      ) : null}
-      {secondaryActionLabel && onSecondaryAction ? (
-        <Pressable
-          onPress={onSecondaryAction}
-          accessibilityRole="button"
-          accessibilityLabel={secondaryActionLabel}
-          hitSlop={8}
-          style={s.secondaryLink}
-        >
-          <Text style={s.secondaryLinkText}>{secondaryActionLabel}</Text>
-        </Pressable>
-      ) : null}
+        {onRetry || (secondaryActionLabel && onSecondaryAction) ? (
+          <View style={s.actions}>
+            {onRetry ? (
+              <Button title={retryLabel} onPress={onRetry} variant="primary" size="lg" fullWidth icon={RefreshCw} />
+            ) : null}
+            {secondaryActionLabel && onSecondaryAction ? (
+              <Button
+                title={secondaryActionLabel}
+                onPress={onSecondaryAction}
+                variant={onRetry ? 'outline' : 'primary'}
+                size="lg"
+                fullWidth
+              />
+            ) : null}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
+
+// Error tint built from the danger token: ~6% wash, ~25% hairline.
+const ERROR_WASH = `${LightColors.danger}0F`;
+const ERROR_LINE = `${LightColors.danger}40`;
 
 const s = StyleSheet.create({
   // ── Full layout ────────────────────────────────────────────
@@ -159,84 +149,66 @@ const s = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 48,
+    paddingHorizontal: 24,
+    paddingVertical: 40,
   },
-  halo: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-    backgroundColor: `${LightColors.danger}0F`,
-    alignItems: 'center',
-    justifyContent: 'center',
+  column: { width: '100%', maxWidth: 400, alignItems: 'stretch' },
+  illustration: { alignItems: 'center', marginBottom: 16 },
+  card: {
+    backgroundColor: ERROR_WASH,
+    borderColor: ERROR_LINE,
+    borderWidth: 1,
+    borderRadius: Radius.card,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
-  disc: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: LightColors.dangerSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   title: {
-    fontSize: 16,
+    flex: 1,
+    fontSize: 17,
+    lineHeight: 22,
     fontFamily: 'Quicksand_700Bold',
-    color: LightColors.textPrimary,
-    textAlign: 'center',
-    marginTop: 18,
+    color: LightColors.dangerDark,
     letterSpacing: -0.2,
   },
   description: {
-    fontSize: 13,
-    fontFamily: 'Quicksand_400Regular',
-    color: LightColors.textTertiary,
-    textAlign: 'center',
-    lineHeight: 18,
-    maxWidth: 280,
-    marginTop: 6,
-  },
-  secondaryLink: {
-    marginTop: 14,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  secondaryLinkText: {
     fontSize: 14,
-    fontFamily: 'Quicksand_700Bold',
-    color: LightColors.primary,
-    letterSpacing: 0.1,
+    lineHeight: 20,
+    fontFamily: 'Quicksand_400Regular',
+    color: LightColors.textPrimary,
+    marginTop: 6,
+    // Under the title, past the icon (20) + gap (10).
+    marginLeft: 30,
   },
+  actions: { gap: 10, marginTop: 20 },
 
   // ── Compact layout ─────────────────────────────────────────
   compactRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: Radius.control,
+    backgroundColor: ERROR_WASH,
+    borderColor: ERROR_LINE,
+    borderWidth: 1,
   },
-  compactChip: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: LightColors.dangerSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
+  compactIcon: { marginRight: 10, alignSelf: 'flex-start', marginTop: 1 },
   compactCopy: {
     flex: 1,
-    marginRight: 12,
+    marginRight: 10,
   },
   compactTitle: {
     fontSize: 14,
+    lineHeight: 19,
     fontFamily: 'Quicksand_700Bold',
-    color: LightColors.textPrimary,
-    letterSpacing: -0.1,
+    color: LightColors.dangerDark,
   },
   compactDescription: {
-    fontSize: 12,
+    fontSize: 13,
     fontFamily: 'Quicksand_400Regular',
-    color: LightColors.textTertiary,
-    lineHeight: 16,
+    color: LightColors.textSecondary,
+    lineHeight: 18,
     marginTop: 2,
   },
 });

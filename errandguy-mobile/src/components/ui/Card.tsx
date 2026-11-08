@@ -59,7 +59,14 @@ export function Card({
   // rounded-2xl (24px) — big soft corners on a white surface with a
   // diffuse Elevation.sm shadow are the core of the airy card language.
   const useShadow = tone === 'default';
-  const cardClass = `${TONE_CLASS[tone]} rounded-2xl ${PADDING_CLASS[padding]} ${className}`;
+  // A caller's own `bg-*` must win. Both classes used to be emitted and the
+  // tone's `bg-surface` beat the caller's fill, so tinted cards ("Verified",
+  // selected errand types) rendered plain white.
+  const callerSetsBg = /(^|\s)bg-/.test(className);
+  const toneClass = callerSetsBg
+    ? TONE_CLASS[tone].replace(/(^|\s)bg-\S+/g, '').trim()
+    : TONE_CLASS[tone];
+  const cardClass = `${toneClass} rounded-2xl ${PADDING_CLASS[padding]} ${className}`;
 
   if (onPress) {
     return (

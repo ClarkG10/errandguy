@@ -24,6 +24,10 @@ interface SuccessCheckProps {
   celebrate?: boolean;
   /** Success notification haptic on mount. Defaults to true. */
   haptic?: boolean;
+  /** Sit the check in a soft green circle (~1.5× `size`) — the success
+   *  screens' "big check" look. The halo adds to the footprint, so it is
+   *  opt-in for callers already laid out around the bare circle. */
+  halo?: boolean;
   /** Called once the intro animation has settled (~900ms; immediately
    *  under Reduce Motion). */
   onDone?: () => void;
@@ -101,12 +105,14 @@ export function SuccessCheck({
   color = LightColors.success,
   celebrate = false,
   haptic = true,
+  halo = false,
   onDone,
   testID,
 }: SuccessCheckProps) {
   const reduceMotion = useReducedMotion();
 
   const circleScale = useSharedValue(0);
+  const haloScale = useSharedValue(0);
   const checkScale = useSharedValue(0);
   const confettiProgress = useSharedValue(0);
 
@@ -128,10 +134,12 @@ export function SuccessCheck({
     if (reduceMotion) {
       // Static check — snap everything to its settled state.
       circleScale.value = 1;
+      haloScale.value = 1;
       checkScale.value = 1;
       confettiProgress.value = 1; // dots fully faded out
     } else {
       circleScale.value = withSpring(1, { damping: 14, stiffness: 220 });
+      haloScale.value = withDelay(80, withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) }));
       checkScale.value = withDelay(
         140,
         withSpring(1, { damping: 12, stiffness: 260 }),
@@ -159,19 +167,34 @@ export function SuccessCheck({
   const circleStyle = useAnimatedStyle(() => ({
     transform: [{ scale: circleScale.value }],
   }));
+  const haloStyle = useAnimatedStyle(() => ({
+    opacity: haloScale.value,
+    transform: [{ scale: 0.85 + 0.15 * haloScale.value }],
+  }));
   const checkStyle = useAnimatedStyle(() => ({
     transform: [{ scale: checkScale.value }],
   }));
 
   const checkSize = size * 0.52;
+  const outer = halo ? Math.round(size * 1.5) : size;
 
   return (
     <View
-      style={[styles.wrap, { width: size, height: size }]}
+      style={[styles.wrap, { width: outer, height: outer }]}
       testID={testID}
       accessibilityRole="image"
       accessibilityLabel="Success"
     >
+      {halo ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.halo,
+            { width: outer, height: outer, borderRadius: outer / 2 },
+            haloStyle,
+          ]}
+        />
+      ) : null}
       {celebrate && !reduceMotion && (
         <View pointerEvents="none" style={styles.confettiLayer}>
           {Array.from({ length: DOT_COUNT }, (_, i) => (
@@ -233,5 +256,11 @@ const styles = StyleSheet.create({
   circle: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  halo: {
+    position: 'absolute',
+    backgroundColor: LightColors.successLight,
+    borderWidth: 1,
+    borderColor: LightColors.successSoft,
   },
 });

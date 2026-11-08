@@ -17,7 +17,7 @@ interface StatusTimelineProps {
  * Trip timeline — ride-hailing pattern: rounded-square stop markers
  * joined by a dashed connector (rendered as a column of short dash
  * segments, since RN has no dashed-border-on-one-side). Completed /
- * current stops carry an ink-dark or brand-blue marker; pending stops
+ * current stops carry a success-green or brand-blue marker; pending stops
  * stay quiet. Timestamps right-align at the row level in consumers
  * that need them; here they sit under the label.
  */
@@ -35,7 +35,7 @@ function DashedConnector({ active }: { active: boolean }) {
             flex: 1,
             marginVertical: 1.5,
             borderRadius: 1,
-            backgroundColor: active ? LightColors.primary : LightColors.dividerStrong,
+            backgroundColor: active ? LightColors.success : LightColors.dividerStrong,
           }}
         />
       ))}
@@ -61,10 +61,12 @@ export function StatusTimeline({ steps, currentStep }: StatusTimelineProps) {
                   borderRadius: 6,
                   alignItems: 'center',
                   justifyContent: 'center',
+                  // Rule 11: finished steps read as done (success green),
+                  // not near-black; the current step stays brand blue.
                   backgroundColor: isCurrent
                     ? LightColors.primary
                     : isCompleted
-                      ? LightColors.ink
+                      ? LightColors.success
                       : LightColors.divider,
                 }}
               >

@@ -56,6 +56,7 @@ import { Skeleton, SkeletonCircle } from '../../../components/ui/Skeleton';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { SuccessCheck } from '../../../components/ui/SuccessCheck';
 import { UploadProgress } from '../../../components/ui/UploadProgress';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { FloatingModal } from '../../../components/ui/FloatingModal';
 import { useRunnerStore } from '../../../stores/runnerStore';
 import { useAuthStore } from '../../../stores/authStore';
@@ -377,7 +378,10 @@ function StopRow({
           {done ? (
             <Check size={15} color={LightColors.textInverse} strokeWidth={3} />
           ) : (
-            <Text className="text-[11px] font-inter-semi text-primary">
+            <Text
+              className="text-[12px] font-inter-semi text-primary"
+              style={{ fontVariant: ['tabular-nums'] }}
+            >
               {stop.sequence}
             </Text>
           )}
@@ -398,12 +402,12 @@ function StopRow({
             {stop.address}
           </Text>
           {meta ? (
-            <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+            <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5">
               {meta}
             </Text>
           ) : null}
           {stop.note ? (
-            <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+            <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5">
               “{stop.note}”
             </Text>
           ) : null}
@@ -421,8 +425,8 @@ function StopRow({
           hitSlop={8}
           className="flex-1 h-10 rounded-xl bg-primaryLight border border-primaryMuted flex-row items-center justify-center"
         >
-          <Navigation size={14} color={LightColors.primary} strokeWidth={2.2} />
-          <Text className="text-primary text-[12px] font-montserrat-bold ml-1.5">
+          <Navigation size={16} color={LightColors.primary} strokeWidth={2.2} />
+          <Text className="text-primary text-[13px] font-montserrat-bold ml-1.5">
             Navigate
           </Text>
         </Pressable>
@@ -443,11 +447,11 @@ function StopRow({
             }`}
           >
             <Phone
-              size={14}
+              size={16}
               color={phone ? LightColors.primary : LightColors.textMuted}
               strokeWidth={2.2}
             />
-            <Text className="text-textPrimary text-[12px] font-montserrat-semi ml-1.5">
+            <Text className="text-textPrimary text-[13px] font-montserrat-semi ml-1.5">
               Call
             </Text>
           </Pressable>
@@ -482,15 +486,15 @@ export default function ActiveErrandScreen() {
   // ~1100-line screen. The live-ETA consumers (the map badge and the step hero)
   // each subscribe to it in their own leaf instead (RunnerActiveMap + the
   // <RunnerEtaLeaf> wrapper below), so location churn stays contained. (P14)
+  // A refusal is only RECORDED here; the notice itself waits for the booking
+  // (see the effect after `isErrandActive`) so a finished errand opened from
+  // history doesn't tell the runner to share a position nobody is tracking.
+  const [locationDenied, setLocationDenied] = useState(false);
   useEffect(() => {
     if (!isTracking) {
       startTracking()
         .then((ok) => {
-          if (!ok) {
-            toast.warning(
-              'Location permission is off. Customers can\u2019t see your live position.',
-            );
-          }
+          if (!ok) setLocationDenied(true);
         })
         .catch(() => {});
     }
@@ -863,6 +867,25 @@ export default function ActiveErrandScreen() {
   const isShoppingErrand = errandRule.requiresShoppingBudget;
   const isSingleLocation = errandRule.singleLocation;
   const isErrandActive = !!booking && !['completed', 'cancelled', 'no_runner'].includes(booking.status);
+  // Pattern 7, once per visit and only on a live errand. A toast rather than a
+  // sheet: startTracking has just shown the OS dialog (or, when permanently
+  // denied, ensureLocationPermission's own "Open Settings" alert), so a modal
+  // sheet here would be a second ask straight after the runner declined.
+  const locationNoticeShownRef = useRef(false);
+  useEffect(() => {
+    if (!locationDenied || !isErrandActive || isReadOnly) return;
+    if (locationNoticeShownRef.current) return;
+    locationNoticeShownRef.current = true;
+    toast.warning(
+      'Location is off, so the customer can\u2019t see you on the map. Turn it on in Settings to share your position.',
+      {
+        actionLabel: 'Settings',
+        onAction: () => {
+          Linking.openSettings().catch(() => {});
+        },
+      },
+    );
+  }, [locationDenied, isErrandActive, isReadOnly]);
   // Android hardware-back guard: require two presses while errand is active
   // AND the runner is the assigned mutator (read-only deep link can leave freely).
   useBackGuard(isErrandActive && !isReadOnly);
@@ -2149,6 +2172,12 @@ export default function ActiveErrandScreen() {
               <SkeletonCircle size={40} />
             </View>
             <Skeleton width="100%" height={56} borderRadius={14} />
+            {/* Pattern 5: after ~4s, say it's the connection, not a freeze. */}
+            <SlowNetworkNotice
+              loading={fetchedQ.loading}
+              onRetry={() => fetchedQ.refresh()}
+              style={{ marginTop: 12 }}
+            />
           </View>
         </SafeAreaView>
       );
@@ -2156,7 +2185,9 @@ export default function ActiveErrandScreen() {
     return (
       <SafeAreaView className="flex-1 bg-background justify-center px-4" edges={['top']}>
         <ErrorState
-          title="Errand unavailable"
+          // "Unavailable" only when the server said the errand is gone; a
+          // dead zone or a 500 is a failed load, not a missing errand.
+          title={isGoneError(fetchedQ.error) ? 'Errand unavailable' : 'Couldn’t load this errand'}
           // "Reassigned or removed" is only true when the server said so
           // (404/403). Offline, a timeout or a 500 used to get the same
           // sentence, so a runner in a dead zone was told the job was gone.
@@ -2167,11 +2198,13 @@ export default function ActiveErrandScreen() {
           }
           error={fetchedQ.error}
           onRetry={() => fetchedQ.refresh()}
+          // The way out that doesn't depend on Retry ever working.
+          secondaryActionLabel="Go back"
+          onSecondaryAction={() =>
+            router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')
+          }
           style={{ flex: 0 }}
         />
-        <View className="items-center pb-10">
-          <Button title="Go Back" variant="outline" onPress={() => router.canGoBack() ? router.back() : router.replace('/(runner)/(tabs)')} />
-        </View>
       </SafeAreaView>
     );
   }
@@ -2284,16 +2317,19 @@ export default function ActiveErrandScreen() {
     <View className="mb-3">
       <View className="flex-row items-center justify-between mb-2">
         <View className="flex-row items-center">
-          <Flag size={12} color={LightColors.textTertiary} strokeWidth={2.2} />
+          <Flag size={16} color={LightColors.textSecondary} strokeWidth={2.2} />
           <Text
-            className="text-[10px] font-montserrat-bold text-textTertiary uppercase ml-1.5"
+            className="text-[11px] font-montserrat-bold text-textSecondary uppercase ml-1.5"
             style={{ letterSpacing: 1.2 }}
           >
             Extra stops
           </Text>
         </View>
         {canTickStops && (
-          <Text className="text-[11px] font-montserrat-bold text-primary">
+          <Text
+            className="text-[12px] font-montserrat-bold text-primary"
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
             {visitedStopCount}/{stops.length} visited
           </Text>
         )}
@@ -2310,7 +2346,7 @@ export default function ActiveErrandScreen() {
         />
       ))}
       {canTickStops && (
-        <Text className="text-[11px] font-montserrat text-textTertiary leading-[15px]">
+        <Text className="text-[12px] font-montserrat text-textSecondary leading-[17px]">
           Tick each stop as you leave it — the customer sees it land live. If a
           stop turns you away you can still complete the errand.
         </Text>
@@ -2406,15 +2442,19 @@ export default function ActiveErrandScreen() {
                 />
               </View>
               <View className="flex-1 py-2.5 pr-3 justify-center">
+                {/* The errand itself ("Buy for me"), not a generic "Active
+                    errand" — which also mislabelled finished errands opened
+                    from history. */}
                 <Text
-                  className="text-[14px] font-montserrat-bold text-textPrimary"
+                  className="text-[15px] font-montserrat-bold text-textPrimary"
                   numberOfLines={1}
+                  accessibilityRole="header"
                 >
-                  Active errand
+                  {booking.errand_type?.name ?? 'Errand'}
                 </Text>
                 <Text
-                  className="text-[11px] font-inter text-textTertiary mt-0.5"
-                  style={{ letterSpacing: 0.4 }}
+                  className="text-[12px] font-inter text-textSecondary mt-0.5"
+                  style={{ fontVariant: ['tabular-nums'] }}
                 >
                   {booking.booking_number}
                 </Text>
@@ -2648,7 +2688,9 @@ export default function ActiveErrandScreen() {
                         .join('. ')}
                     >
                       <CurrentStepHero
-                        eyebrow={inPickupPhase ? 'PICKUP' : 'DROP-OFF'}
+                        // A finished errand has no leg to label — the title
+                        // ("Errand complete") already says where it stands.
+                        eyebrow={isReadOnly ? undefined : inPickupPhase ? 'PICKUP' : 'DROP-OFF'}
                         title={runnerHeroTitle}
                         subtitle={heroSubtitle}
                         etaMinutes={etaMin != null ? Math.max(1, Math.round(etaMin)) : null}
@@ -2671,10 +2713,12 @@ export default function ActiveErrandScreen() {
                       }}
                       accessibilityRole="button"
                       accessibilityLabel="Open turn-by-turn navigation"
-                      className="flex-1 h-11 rounded-xl bg-primary flex-row items-center justify-center"
+                      // Tinted, not solid: the status button at the foot of the
+                      // sheet is the screen's one primary action.
+                      className="flex-1 h-11 rounded-xl bg-primaryLight border border-primaryMuted flex-row items-center justify-center"
                     >
-                      <Navigation size={16} color={LightColors.textInverse} strokeWidth={2.2} />
-                      <Text className="text-white text-[13px] font-montserrat-bold ml-2">
+                      <Navigation size={16} color={LightColors.primary} strokeWidth={2.2} />
+                      <Text className="text-primary text-[14px] font-montserrat-bold ml-2">
                         Navigate
                       </Text>
                     </Pressable>
@@ -2689,10 +2733,10 @@ export default function ActiveErrandScreen() {
                       accessibilityRole="button"
                       accessibilityLabel="Open in another navigation app"
                       accessibilityHint="Long press to choose between Waze and Maps"
-                      className="h-11 px-4 rounded-xl border border-dividerStrong bg-surfaceMuted flex-row items-center justify-center"
+                      className="h-11 px-4 rounded-xl border border-dividerStrong bg-surface flex-row items-center justify-center"
                     >
-                      <MapPin size={15} color={LightColors.textPrimary} strokeWidth={1.8} />
-                      <Text className="text-textPrimary text-[13px] font-montserrat-semi ml-1.5">
+                      <MapPin size={16} color={LightColors.textPrimary} strokeWidth={2} />
+                      <Text className="text-textPrimary text-[14px] font-montserrat-semi ml-1.5">
                         Maps
                       </Text>
                     </Pressable>
@@ -2716,12 +2760,18 @@ export default function ActiveErrandScreen() {
                       amountToCollect,
                     )} in cash from the customer`}
                   >
-                    <Banknote size={17} color={LightColors.accentDark} strokeWidth={2} />
+                    <Banknote size={20} color={LightColors.accentDark} strokeWidth={2} />
                     <View className="flex-1 ml-2.5">
-                      <Text className="text-[13px] font-montserrat-bold text-textPrimary">
+                      <Text
+                        className="text-[15px] font-montserrat-bold text-textPrimary"
+                        style={{ fontVariant: ['tabular-nums'] }}
+                      >
                         Collect {formatCurrency(amountToCollect)} in cash
                       </Text>
-                      <Text className="text-[11px] font-montserrat text-textSecondary mt-0.5">
+                      <Text
+                        className="text-[12px] font-montserrat text-textSecondary mt-0.5"
+                        style={{ fontVariant: ['tabular-nums'] }}
+                      >
                         {!isCashJob
                           ? `Reimbursement for the ${formatCurrency(
                               itemsFronted,
@@ -2781,7 +2831,7 @@ export default function ActiveErrandScreen() {
                     {customerName}
                   </Text>
                   <Text
-                    className="text-[11px] font-montserrat text-textTertiary mt-0.5"
+                    className="text-[12px] font-montserrat text-textSecondary mt-0.5"
                     numberOfLines={1}
                   >
                     {contactsLocked
@@ -2802,7 +2852,7 @@ export default function ActiveErrandScreen() {
                       hitSlop={8}
                       className="self-start mt-1"
                     >
-                      <Text className="text-[11px] font-montserrat-bold text-primary underline">
+                      <Text className="text-[12px] font-montserrat-bold text-primary underline">
                         Other numbers
                       </Text>
                     </Pressable>
@@ -2824,7 +2874,7 @@ export default function ActiveErrandScreen() {
                     // the chip background no longer differentiates.
                     className="w-10 h-10 rounded-full items-center justify-center mr-2 bg-surfaceMuted"
                   >
-                    <Phone size={17} color={customerPhone ? LightColors.primary : LightColors.textMuted} strokeWidth={2} />
+                    <Phone size={20} color={customerPhone ? LightColors.primary : LightColors.textMuted} strokeWidth={2} />
                   </Pressable>
                 )}
                 <Pressable
@@ -2838,7 +2888,7 @@ export default function ActiveErrandScreen() {
                   hitSlop={6}
                   className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center"
                 >
-                  <MessageCircle size={17} color={LightColors.primary} strokeWidth={2} />
+                  <MessageCircle size={20} color={LightColors.primary} strokeWidth={2} />
                   {unreadForBooking > 0 && (
                     <View className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 bg-danger rounded-full items-center justify-center border-[1.5px] border-surface">
                       <Text className="text-[9px] text-white font-montserrat-bold leading-[12px]">
@@ -2869,27 +2919,33 @@ export default function ActiveErrandScreen() {
                   .join('. ')}
               >
                 <View>
-                  <Text className="text-[10px] font-montserrat-bold uppercase text-textTertiary" style={{ letterSpacing: 1 }}>
+                  <Text className="text-[11px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1 }}>
                     Your payout
                   </Text>
                   {booking.runner_payout != null ? (
-                    <Text className="text-[18px] font-inter-semi tabular-nums text-textPrimary mt-0.5">
+                    <Text
+                      className="font-inter-semi text-textPrimary mt-0.5"
+                      style={{ fontSize: 22, lineHeight: 28, fontVariant: ['tabular-nums'] }}
+                    >
                       {formatCurrency(booking.runner_payout)}
                     </Text>
                   ) : (
                     // Never present total_amount (customer charge incl. item
                     // cost / platform fee) as the runner's take-home.
-                    <Text className="text-[15px] font-montserrat-semi text-textTertiary mt-0.5">
+                    <Text className="text-[15px] font-montserrat-semi text-textSecondary mt-0.5">
                       Payout pending
                     </Text>
                   )}
                 </View>
                 {isShoppingErrand && booking.shopping_budget != null && (
                   <View className="items-end">
-                    <Text className="text-[10px] font-montserrat-bold uppercase text-warningDark" style={{ letterSpacing: 1 }}>
+                    <Text className="text-[11px] font-montserrat-bold uppercase text-warningDark" style={{ letterSpacing: 1 }}>
                       Budget
                     </Text>
-                    <Text className="text-[14px] font-inter-semi tabular-nums text-warningDark mt-0.5">
+                    <Text
+                      className="text-[15px] font-inter-semi text-warningDark mt-0.5"
+                      style={{ fontVariant: ['tabular-nums'] }}
+                    >
                       {formatCurrency(booking.shopping_budget)}
                     </Text>
                   </View>
@@ -2909,9 +2965,9 @@ export default function ActiveErrandScreen() {
                   Trip details
                 </Text>
                 {detailsOpen ? (
-                  <ChevronUp size={14} color={LightColors.textTertiary} />
+                  <ChevronUp size={16} color={LightColors.textSecondary} />
                 ) : (
-                  <ChevronDown size={14} color={LightColors.textTertiary} />
+                  <ChevronDown size={16} color={LightColors.textSecondary} />
                 )}
               </Pressable>
 
@@ -2919,8 +2975,8 @@ export default function ActiveErrandScreen() {
                 <View className="mt-2">
                   {isShoppingErrand && booking.shopping_budget != null && (
                     <View className="bg-warningLight border border-warningSoft rounded-xl p-3 mb-3 flex-row gap-2">
-                      <ShoppingBag size={14} color={LightColors.warning} />
-                      <Text className="flex-1 text-[11px] font-montserrat text-textSecondary leading-[15px]">
+                      <ShoppingBag size={16} color={LightColors.warningDark} />
+                      <Text className="flex-1 text-[12px] font-montserrat text-textSecondary leading-[17px]">
                         Don't exceed {formatCurrency(booking.shopping_budget)}. You pay at the store; capture the receipt at pickup and the customer repays that exact amount in cash at the door.
                       </Text>
                     </View>
@@ -2944,7 +3000,7 @@ export default function ActiveErrandScreen() {
                       (search `stopsSection`) with per-stop Navigate, Call and
                       a visit tick. Nothing is duplicated here on purpose. */}
 
-                  <Text className="text-[10px] font-montserrat-bold text-textTertiary mb-3 uppercase" style={{ letterSpacing: 1.2 }}>
+                  <Text className="text-[11px] font-montserrat-bold text-textSecondary mb-3 uppercase" style={{ letterSpacing: 1.2 }}>
                     Progress
                   </Text>
                   <View className="mb-3">
@@ -2977,10 +3033,10 @@ export default function ActiveErrandScreen() {
                       accessibilityRole="button"
                       accessibilityLabel="Report a problem with this errand"
                       hitSlop={8}
-                      className="flex-row items-center gap-1.5 py-2"
+                      className="flex-row items-center gap-1.5 py-3"
                     >
-                      <AlertTriangle size={12} color={LightColors.textMuted} />
-                      <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
+                      <AlertTriangle size={16} color={LightColors.textSecondary} />
+                      <Text className="text-[13px] font-montserrat-semi text-textSecondary underline">
                         Report a problem
                       </Text>
                     </Pressable>
@@ -2993,10 +3049,10 @@ export default function ActiveErrandScreen() {
                         accessibilityRole="button"
                         accessibilityLabel="Report this person — the customer"
                         hitSlop={8}
-                        className="flex-row items-center gap-1.5 py-2"
+                        className="flex-row items-center gap-1.5 py-3"
                       >
-                        <UserX size={12} color={LightColors.textMuted} />
-                        <Text className="text-[11px] font-montserrat-semi text-textTertiary underline">
+                        <UserX size={16} color={LightColors.textSecondary} />
+                        <Text className="text-[13px] font-montserrat-semi text-textSecondary underline">
                           Report this person
                         </Text>
                       </Pressable>
@@ -3022,7 +3078,7 @@ export default function ActiveErrandScreen() {
                 {completionChecklist.length > 0 && (
                   <View className="bg-surfaceMuted rounded-xl px-3 py-2.5 mb-2.5">
                     <Text
-                      className="text-[10px] font-montserrat-bold text-textTertiary uppercase mb-1"
+                      className="text-[11px] font-montserrat-bold text-textSecondary uppercase mb-1"
                       style={{ letterSpacing: 1 }}
                     >
                       Before you complete
@@ -3035,9 +3091,9 @@ export default function ActiveErrandScreen() {
                         accessibilityLabel={`${item.label}: ${item.done ? 'captured' : 'not captured'}`}
                       >
                         {item.done ? (
-                          <CheckCircle2 size={16} color={LightColors.success} strokeWidth={2.2} />
+                          <CheckCircle2 size={16} color={LightColors.successDark} strokeWidth={2.2} />
                         ) : (
-                          <Circle size={16} color={LightColors.textMuted} strokeWidth={2} />
+                          <Circle size={16} color={LightColors.textTertiary} strokeWidth={2} />
                         )}
                         <Text
                           numberOfLines={1}
@@ -3052,7 +3108,7 @@ export default function ActiveErrandScreen() {
                         {!item.done && item.note && (
                           <Text
                             numberOfLines={1}
-                            className="text-[11px] font-montserrat text-textTertiary ml-1.5 flex-shrink"
+                            className="text-[12px] font-montserrat text-textSecondary ml-1.5 flex-shrink"
                           >
                             · {item.note}
                           </Text>
@@ -3118,7 +3174,7 @@ export default function ActiveErrandScreen() {
                     </View>
                   </Pressable>
                 )}
-                <Text className="text-[10px] font-montserrat-bold text-textTertiary uppercase tracking-wider mb-1.5 text-center">
+                <Text className="text-[12px] font-montserrat text-textSecondary mb-2 text-center">
                   {booking.status === 'matched'
                     ? // A "New errand offer" push lands here, not on the pop-up,
                       // so name the booked vehicle here too.
@@ -3146,11 +3202,10 @@ export default function ActiveErrandScreen() {
                 className="px-5 pt-3 pb-3 border-t border-divider bg-surface items-center"
                 onLayout={(e) => setCtaH(e.nativeEvent.layout.height)}
               >
-                <Text className="text-[11px] font-montserrat text-textTertiary uppercase tracking-wider mb-0.5">
-                  Read-only view
-                </Text>
-                <Text className="text-xs font-montserrat text-textSecondary">
-                  Status: {STATUS_LABELS[booking.status] ?? booking.status}
+                {/* The hero above already names the status; this only says
+                    why there's no action button. */}
+                <Text className="text-[13px] font-montserrat text-textSecondary text-center">
+                  This errand has ended — there’s nothing left to do here.
                 </Text>
               </View>
             )}
@@ -3585,7 +3640,7 @@ export default function ActiveErrandScreen() {
             <ChevronRight size={16} color={LightColors.textTertiary} />
           </Pressable>
         ))}
-        <Text className="text-[11px] font-montserrat text-textTertiary mt-1 leading-[15px]">
+        <Text className="text-[12px] font-montserrat text-textSecondary mt-1 leading-[17px]">
           We’ll remember your choice. Live tracking pauses while you’re outside
           ErrandGuy — come back here to update your status.
         </Text>
@@ -3656,7 +3711,7 @@ export default function ActiveErrandScreen() {
                 {reason.label}
               </Text>
               {busy ? (
-                <Text className="text-[11px] font-montserrat text-textTertiary">
+                <Text className="text-[12px] font-montserrat text-textSecondary">
                   Sending…
                 </Text>
               ) : (
@@ -3665,7 +3720,7 @@ export default function ActiveErrandScreen() {
             </Pressable>
           );
         })}
-        <Text className="text-[11px] font-montserrat text-textTertiary mt-1 leading-[15px]">
+        <Text className="text-[12px] font-montserrat text-textSecondary mt-1 leading-[17px]">
           Opens a support thread linked to{' '}
           {booking.booking_number ?? 'this errand'} — you can add details there.
         </Text>

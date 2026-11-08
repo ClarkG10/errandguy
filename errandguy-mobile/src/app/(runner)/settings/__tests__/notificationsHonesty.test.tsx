@@ -36,11 +36,11 @@ describe('runner notification settings are honest', () => {
     const { getByText, findByText } = render(<NotificationsScreen />);
     await findByText('Notifications are on for ErrandGuy.');
 
-    expect(getByText('New Errand Requests')).toBeTruthy();
-    expect(getByText('Chat Messages')).toBeTruthy();
-    expect(getByText('Wallet & Payouts')).toBeTruthy();
+    expect(getByText('New errand offers')).toBeTruthy();
+    expect(getByText('Chat messages')).toBeTruthy();
+    expect(getByText('Wallet & payouts')).toBeTruthy();
     expect(getByText('Verification')).toBeTruthy();
-    expect(getByText('Safety Alerts')).toBeTruthy();
+    expect(getByText('Safety alerts')).toBeTruthy();
     expect(getByText('Always on for your safety')).toBeTruthy();
   });
 
@@ -69,7 +69,7 @@ describe('runner notification settings are honest', () => {
     const { findByText } = render(<NotificationsScreen />);
 
     expect(
-      await findByText(/Notifications are off\./),
+      await findByText('Notifications are off for ErrandGuy'),
     ).toBeTruthy();
     expect(await findByText('Turn on notifications')).toBeTruthy();
   });

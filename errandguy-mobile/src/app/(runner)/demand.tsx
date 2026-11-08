@@ -5,6 +5,7 @@ import { TrendingUp } from 'lucide-react-native';
 import { GradientHeader } from '../../components/ui/GradientHeader';
 import { Card } from '../../components/ui/Card';
 import { Eyebrow } from '../../components/ui/Typography';
+import { SlowNetworkNotice } from '../../components/ui/SlowNetworkNotice';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { Spinner } from '../../components/ui/Spinner';
@@ -176,6 +177,9 @@ export default function DemandScreen() {
       <View className="flex-1 bg-background">
         <GradientHeader title="Busy areas" showBack fallbackHref="/(runner)/(tabs)" />
         <DemandSkeleton />
+        <View pointerEvents="box-none" style={{ position: 'absolute', left: 20, right: 20, bottom: insets.bottom + 24 }}>
+          <SlowNetworkNotice loading={initialLoading} onRetry={retryAll} />
+        </View>
       </View>
     );
   }
@@ -246,7 +250,7 @@ export default function DemandScreen() {
                 </View>
               ) : (
                 <View className="flex-1 bg-surfaceMuted items-center justify-center px-6">
-                  <TrendingUp size={30} color={LightColors.textMuted} />
+                  <TrendingUp size={24} color={LightColors.textSecondary} />
                   <Text className="text-sm font-montserrat text-textSecondary mt-2 text-center">
                     Not enough recent bookings to map yet. Check back soon.
                   </Text>
@@ -255,7 +259,7 @@ export default function DemandScreen() {
             </View>
           )}
           {cells.length > 0 && (
-            <Text className="text-[12px] font-montserrat text-textTertiary mt-2">
+            <Text className="text-[12px] font-montserrat text-textSecondary mt-2">
               Warmer areas had more bookings in the last {heatmapQ.data?.days ?? 14} days.
             </Text>
           )}
@@ -308,7 +312,7 @@ export default function DemandScreen() {
                           <Text
                             numberOfLines={1}
                             style={{ width: 34, textAlign: 'center' }}
-                            className="text-[12px] font-montserrat text-textTertiary"
+                            className="text-[12px] font-montserrat text-textSecondary"
                           >
                             {hourLabel(h)}
                           </Text>
@@ -364,7 +368,7 @@ export default function DemandScreen() {
                     className="flex-row items-center"
                     style={{ marginLeft: LABEL_W, marginTop: 8 }}
                   >
-                    <Text className="text-[12px] font-montserrat text-textTertiary mr-1">Less</Text>
+                    <Text className="text-[12px] font-montserrat text-textSecondary mr-1">Less</Text>
                     {[0, 0.25, 0.5, 0.75, 1].map((t) => (
                       <View
                         key={t}
@@ -377,14 +381,14 @@ export default function DemandScreen() {
                         }}
                       />
                     ))}
-                    <Text className="text-[12px] font-montserrat text-textTertiary ml-1">More</Text>
+                    <Text className="text-[12px] font-montserrat text-textSecondary ml-1">More</Text>
                   </View>
                 </View>
               </ScrollView>
             )}
           </Card>
           {grid && gridMax > 0 && (
-            <Text className="text-[12px] font-montserrat text-textTertiary mt-2">
+            <Text className="text-[12px] font-montserrat text-textSecondary mt-2">
               Based on the last {peakQ.data?.days ?? 30} days of bookings.
             </Text>
           )}

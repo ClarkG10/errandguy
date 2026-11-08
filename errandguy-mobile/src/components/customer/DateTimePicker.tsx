@@ -12,6 +12,8 @@ import {
 import * as Haptics from 'expo-haptics';
 import { AlertCircle, CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react-native';
 import dayjs from 'dayjs';
+import { Radius } from '../../constants/radius';
+import { PressableScale } from './booking/PressableScale';
 import { LightColors } from '../../constants/colors';
 
 interface DateTimePickerProps {
@@ -509,7 +511,7 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
           const key = date.format('YYYY-MM-DD');
           const isSelected = !!pickedDate && key === pickedDate.format('YYYY-MM-DD');
           return (
-            <Pressable
+            <PressableScale
               key={key}
               accessibilityRole="button"
               accessibilityLabel={
@@ -518,19 +520,21 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
                   : date.format('dddd, MMMM D')
               }
               accessibilityState={{ selected: isSelected }}
-              className="px-3 py-2.5 rounded-xl items-center min-w-[60px]"
               // Selection = soft tint + brand border, DARK text in both
               // states (never inverted to invisible white). Constant border
               // width so the chip's content never shifts and the rail
-              // doesn't reflow.
-              style={({ pressed }) => [
-                {
-                  borderWidth: 1.5,
-                  borderColor: isSelected ? LightColors.primary : LightColors.divider,
-                  backgroundColor: isSelected ? LightColors.primaryLight : LightColors.surface,
-                },
-                pressed && { opacity: 0.85 },
-              ]}
+              // doesn't reflow. A plain style on the chip — the Pressable
+              // style callback this used lost the border and fill.
+              contentStyle={{
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                minWidth: 60,
+                alignItems: 'center',
+                borderRadius: Radius.control,
+                borderWidth: 1.5,
+                borderColor: isSelected ? LightColors.primary : LightColors.divider,
+                backgroundColor: isSelected ? LightColors.primaryLight : LightColors.surface,
+              }}
               android_ripple={{ color: `${LightColors.primary}14` }}
               onLayout={(e) => {
                 dateOffsets.current[key] = e.nativeEvent.layout.x;
@@ -557,7 +561,7 @@ export function DateTimePicker({ value, onChange }: DateTimePickerProps) {
               >
                 {date.format('MMM')}
               </Text>
-            </Pressable>
+            </PressableScale>
           );
         })}
       </ScrollView>

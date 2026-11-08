@@ -63,7 +63,7 @@ const REQUIRED_DOCUMENTS: DocConfig[] = [
 const VEHICLE_DOCUMENTS: DocConfig[] = [
   {
     type: 'vehicle_registration',
-    label: 'Vehicle Registration',
+    label: 'Vehicle registration',
     description: "Your vehicle's OR/CR document",
     icon: Car,
     required: false,
@@ -71,7 +71,7 @@ const VEHICLE_DOCUMENTS: DocConfig[] = [
   },
   {
     type: 'vehicle_photo',
-    label: 'Vehicle Photo',
+    label: 'Vehicle photo',
     description: 'Clear photo showing your vehicle and plate number',
     icon: Car,
     required: false,
@@ -79,7 +79,7 @@ const VEHICLE_DOCUMENTS: DocConfig[] = [
   },
   {
     type: 'drivers_license',
-    label: "Driver's License",
+    label: "Driver's license",
     description: "Valid driver's license (front side)",
     icon: FileText,
     required: false,
@@ -237,7 +237,7 @@ export default function DocumentsScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      <GradientHeader title="Documents & Verification" showBack fallbackHref="/(runner)/(tabs)/profile" />
+      <GradientHeader title="Documents & verification" showBack fallbackHref="/(runner)/(tabs)/profile" />
 
       <ScrollView
         className="flex-1"
@@ -293,7 +293,9 @@ export default function DocumentsScreen() {
             {/* Verification status banner — only from real data. */}
             {verificationStatus === 'approved' ? (
               <View className="px-5 pt-4 mb-4">
-                <Card className="p-4 bg-successSoft">
+                {/* Fill on the style: Card's own bg-surface class beat an added
+                    bg-successSoft, so "Verified" sat on plain white. */}
+                <Card padding="none" className="p-4" style={{ backgroundColor: LightColors.successSoft }}>
                   <View className="flex-row items-center gap-3">
                     <CheckCircle size={24} color={LightColors.success} />
                     <View className="flex-1">
@@ -322,14 +324,14 @@ export default function DocumentsScreen() {
 
             {/* Required Documents */}
             <View className="px-5 mb-6">
-              <Eyebrow className="mb-3 ml-0.5">Required Documents</Eyebrow>
+              <Eyebrow className="mb-3 ml-0.5">Required documents</Eyebrow>
               {REQUIRED_DOCUMENTS.map(renderDocCard)}
             </View>
 
             {/* Vehicle Documents */}
             <View className="px-5 mb-2">
-              <Eyebrow className="mb-3 ml-0.5">Vehicle Documents (Optional)</Eyebrow>
-              <Text className="text-xs font-montserrat text-textTertiary mb-3 ml-0.5">
+              <Eyebrow className="mb-3 ml-0.5">Vehicle documents (optional)</Eyebrow>
+              <Text className="text-[13px] font-montserrat text-textSecondary mb-3 ml-0.5">
                 Not needed for approval. Add them if you use a motorcycle or car.
               </Text>
               {VEHICLE_DOCUMENTS.map(renderDocCard)}

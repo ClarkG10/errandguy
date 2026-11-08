@@ -81,7 +81,7 @@ const REQUIRED_DOCUMENTS: DocConfig[] = [
 const VEHICLE_DOCUMENTS: DocConfig[] = [
   {
     type: 'vehicle_registration',
-    label: 'Vehicle Registration',
+    label: 'Vehicle registration',
     description: "Your vehicle's OR/CR document",
     icon: Car,
     required: false,
@@ -89,7 +89,7 @@ const VEHICLE_DOCUMENTS: DocConfig[] = [
   },
   {
     type: 'vehicle_photo',
-    label: 'Vehicle Photo',
+    label: 'Vehicle photo',
     description: 'Clear photo showing your vehicle and plate number',
     icon: Car,
     required: false,
@@ -97,7 +97,7 @@ const VEHICLE_DOCUMENTS: DocConfig[] = [
   },
   {
     type: 'drivers_license',
-    label: "Driver's License",
+    label: "Driver's license",
     description: 'Valid driver\'s license (front side)',
     icon: FileText,
     required: false,
@@ -246,7 +246,7 @@ export default function RunnerOnboardingScreen() {
 
   const handleContinue = async () => {
     if (!requiredUploaded) {
-      toast.warning('Please upload your Government ID and Selfie with ID before continuing.');
+      toast.warning('Upload your government ID and your selfie with ID to continue.');
       return;
     }
 
@@ -365,7 +365,7 @@ export default function RunnerOnboardingScreen() {
               </View>
               <Text
                 className="text-xs font-montserrat-semi mt-0.5"
-                style={{ color: existing ? statusTextColor : LightColors.textTertiary }}
+                style={{ color: existing ? statusTextColor : LightColors.textSecondary }}
               >
                 {existing ? statusText : doc.description}
               </Text>
@@ -386,7 +386,7 @@ export default function RunnerOnboardingScreen() {
                   </Text>
                 </View>
               ) : canUpload ? (
-                <Text className="text-xs font-montserrat text-textTertiary mt-1">
+                <Text className="text-xs font-montserrat text-textSecondary mt-1">
                   {doc.tip}
                 </Text>
               ) : null}
@@ -431,11 +431,9 @@ export default function RunnerOnboardingScreen() {
           onPress={handleLogout}
           accessibilityRole="button"
           accessibilityLabel="Sign out"
-          // 36pt visual — hitSlop lifts the effective target to 44pt.
-          hitSlop={4}
-          className="w-9 h-9 rounded-full items-center justify-center"
+          className="w-11 h-11 rounded-full items-center justify-center"
         >
-          <LogOut size={18} color={LightColors.textMuted} />
+          <LogOut size={20} color={LightColors.textSecondary} />
         </Pressable>
       </View>
 
@@ -455,10 +453,13 @@ export default function RunnerOnboardingScreen() {
         {/* Header */}
         <View className="items-center px-6 pt-4 pb-6">
           <Illustration name="runner-verify" size={144} style={{ marginBottom: 8 }} />
-          <Text className="text-2xl font-montserrat-bold text-textPrimary text-center">
-            Complete Your Runner Profile
+          <Text
+            className="text-2xl font-montserrat-bold text-textPrimary text-center"
+            accessibilityRole="header"
+          >
+            Get verified to start earning
           </Text>
-          <Text className="text-sm font-montserrat text-textTertiary text-center mt-2 px-4">
+          <Text className="text-sm font-montserrat text-textSecondary text-center mt-2 px-4">
             Upload your documents to get verified. You'll be able to start
             accepting errands once approved.
           </Text>
@@ -500,11 +501,17 @@ export default function RunnerOnboardingScreen() {
             {/* Step progress — how far through the required uploads. */}
             <View className="px-5 mb-6">
               <View className="flex-row items-center justify-between mb-2">
-                <Text className="text-xs font-montserrat-semi text-textSecondary">
+                <Text
+                  className="text-xs font-montserrat-semi text-textSecondary"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   {requiredCount} of {REQUIRED_DOCUMENTS.length} required uploaded
                 </Text>
                 {optionalCount > 0 && (
-                  <Text className="text-xs font-montserrat text-textTertiary">
+                  <Text
+                    className="text-xs font-montserrat text-textSecondary"
+                    style={{ fontVariant: ['tabular-nums'] }}
+                  >
                     +{optionalCount} optional
                   </Text>
                 )}
@@ -532,14 +539,14 @@ export default function RunnerOnboardingScreen() {
 
             {/* Required Documents */}
             <View className="px-5 mb-6">
-              <Eyebrow className="mb-3 ml-0.5">Required Documents</Eyebrow>
+              <Eyebrow className="mb-3 ml-0.5">Required documents</Eyebrow>
               {REQUIRED_DOCUMENTS.map(renderDocCard)}
             </View>
 
             {/* Vehicle Documents */}
             <View className="px-5 mb-6">
-              <Eyebrow className="mb-3 ml-0.5">Vehicle Documents (Optional)</Eyebrow>
-              <Text className="text-xs font-montserrat text-textTertiary mb-3 ml-0.5">
+              <Eyebrow className="mb-3 ml-0.5">Vehicle documents (optional)</Eyebrow>
+              <Text className="text-xs font-montserrat text-textSecondary mb-3 ml-0.5">
                 Not needed for approval. Add them if you use a motorcycle or car.
               </Text>
               {VEHICLE_DOCUMENTS.map(renderDocCard)}
@@ -566,10 +573,18 @@ export default function RunnerOnboardingScreen() {
             {/* Continue Button */}
             <View className="px-5">
               <Button
-                title={requiredUploaded ? 'Continue to Dashboard' : 'Upload Required Documents'}
+                title="Continue"
                 fullWidth
                 size="lg"
                 disabled={!requiredUploaded}
+                // Pattern 9: a disabled CTA names exactly what's missing.
+                disabledReason={(() => {
+                  const missing = REQUIRED_DOCUMENTS.filter((doc) => !isDocComplete(doc.type)).map(
+                    (doc) => doc.label.charAt(0).toLowerCase() + doc.label.slice(1),
+                  );
+                  if (missing.length === 0) return undefined;
+                  return `Upload your ${missing.join(' and ')} to continue`;
+                })()}
                 onPress={handleContinue}
               />
             </View>
@@ -585,7 +600,7 @@ export default function RunnerOnboardingScreen() {
           setActiveDocType(null);
         }}
         onConfirm={handleImageConfirm}
-        title={activeDoc ? `Upload ${activeDoc.label}` : 'Upload Photo'}
+        title={activeDoc ? `Upload ${activeDoc.label.charAt(0).toLowerCase()}${activeDoc.label.slice(1)}` : 'Upload photo'}
         subtitle={activeDoc?.description}
         uploading={!!uploading}
       />

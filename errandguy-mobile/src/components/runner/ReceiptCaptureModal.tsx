@@ -16,11 +16,13 @@ import { X, Camera, Receipt as ReceiptIcon, MessageCircle, AlertTriangle } from 
 import * as Haptics from 'expo-haptics';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { PermissionPrompt } from '../ui/PermissionSheet';
 import { useImagePicker, type ImagePickerSource } from '../../hooks/useImagePicker';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { LightColors } from '../../constants/colors';
 import { Radius } from '../../constants/radius';
 import { toast } from '../../stores/toastStore';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 
 interface ReceiptCaptureModalProps {
   visible: boolean;
@@ -52,16 +54,24 @@ export function ReceiptCaptureModal({
   const [amountText, setAmountText] = useState('');
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
 
-  // Turn a silent permission denial into a recovery path: a toast that
-  // deep-links to the OS Settings so the runner isn't stuck with a
-  // dead capture button in a proof-required flow.
+  const reduceMotion = useReducedMotion();
+  // Camera refused at the OS level — explained in place of the capture area
+  // (with the gallery as the alternative) rather than only in a toast that
+  // fades while the runner is still at the till.
+  const [cameraDenied, setCameraDenied] = useState(false);
+
+  // Turn a silent permission denial into a recovery path: a deep-link to the
+  // OS Settings so the runner isn't stuck with a dead capture button in a
+  // proof-required flow.
   const handlePermissionDenied = useCallback((source: ImagePickerSource) => {
-    toast.error(
-      source === 'camera'
-        ? 'Camera access is off — enable it in Settings'
-        : 'Photo access is off — enable it in Settings',
-      { actionLabel: 'Settings', onAction: () => Linking.openSettings().catch(() => {}) },
-    );
+    if (source === 'camera') {
+      setCameraDenied(true);
+      return;
+    }
+    toast.error('Photo access is off — enable it in Settings', {
+      actionLabel: 'Settings',
+      onAction: () => Linking.openSettings().catch(() => {}),
+    });
   }, []);
   const { pickImage, takePhoto } = useImagePicker({ onPermissionDenied: handlePermissionDenied });
 
@@ -72,11 +82,23 @@ export function ReceiptCaptureModal({
 
   const overBudget = amount > budget;
   const canSubmit = amount > 0 && !overBudget && !!receiptUri && !submitting;
+  // Pattern 9: a disabled submit says what is still missing.
+  const submitBlockedReason =
+    amount <= 0
+      ? 'Enter the amount you paid'
+      : overBudget
+        ? 'Bring the total within the budget to continue'
+        : !receiptUri
+          ? 'Add a photo of the receipt'
+          : undefined;
 
   const handleCapture = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const r = await takePhoto();
-    if (r) setReceiptUri(r.uri);
+    if (r) {
+      setCameraDenied(false);
+      setReceiptUri(r.uri);
+    }
   };
   const handleGallery = async () => {
     const r = await pickImage();
@@ -123,9 +145,13 @@ export function ReceiptCaptureModal({
         >
           <Pressable onPress={(e) => e.stopPropagation()}>
             <MotiView
-              from={{ translateY: 500, opacity: 0 }}
+              from={reduceMotion ? { opacity: 1 } : { translateY: 500, opacity: 0 }}
               animate={{ translateY: 0, opacity: 1 }}
-              transition={{ type: 'spring', damping: 22, stiffness: 220, mass: 0.8 }}
+              transition={
+                reduceMotion
+                  ? { type: 'timing', duration: 0 }
+                  : { type: 'spring', damping: 22, stiffness: 220, mass: 0.8 }
+              }
               style={s.sheet}
             >
             {/* Handle */}
@@ -136,8 +162,10 @@ export function ReceiptCaptureModal({
             {/* Header */}
             <View style={s.header}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <ReceiptIcon size={22} color={LightColors.primary} />
-                <Text style={s.title}>Receipt &amp; Actual Cost</Text>
+                <ReceiptIcon size={20} color={LightColors.primary} />
+                <Text style={s.title} accessibilityRole="header">
+                  Receipt and amount paid
+                </Text>
               </View>
               <Pressable
                 onPress={onClose}
@@ -147,7 +175,7 @@ export function ReceiptCaptureModal({
                 hitSlop={8}
                 style={s.closeBtn}
               >
-                <X size={18} color={LightColors.textTertiary} />
+                <X size={20} color={LightColors.textSecondary} />
               </Pressable>
             </View>
 
@@ -177,9 +205,10 @@ export function ReceiptCaptureModal({
                 // separate low-contrast Text.
                 error={
                   overBudget
-                    ? `Over budget by ${formatCurrency(amount - budget)}`
+                    ? `Over budget by ${formatCurrency(amount - budget)}. Enter a total of ${formatCurrency(budget)} or less.`
                     : undefined
                 }
+                valid={amount > 0 && !overBudget}
               />
 
               {/* Over-budget dead-end, made honest.
@@ -250,21 +279,35 @@ export function ReceiptCaptureModal({
 
               {!receiptUri ? (
                 <View style={{ gap: 12, marginBottom: 16 }}>
-                  <Pressable
-                    onPress={handleCapture}
-                    accessibilityRole="button"
-                    accessibilityLabel="Take photo of receipt"
-                    style={s.captureArea}
-                  >
-                    <Camera size={36} color={LightColors.primary} />
-                    <Text style={s.captureLabel}>Take photo of receipt</Text>
-                  </Pressable>
-                  <Button
-                    title="Choose from Gallery"
-                    variant="outline"
-                    onPress={handleGallery}
-                    fullWidth
-                  />
+                  {cameraDenied ? (
+                    // Pattern 7: why the camera is needed, Allow in Settings,
+                    // and the gallery as the alternative.
+                    <PermissionPrompt
+                      kind="camera"
+                      reason="The receipt photo shows the customer what they repay you."
+                      alternativeLabel="Choose from gallery instead"
+                      onAlternative={handleGallery}
+                      style={{ paddingBottom: 4 }}
+                    />
+                  ) : (
+                    <Pressable
+                      onPress={handleCapture}
+                      accessibilityRole="button"
+                      accessibilityLabel="Take photo of receipt"
+                      style={s.captureArea}
+                    >
+                      <Camera size={36} color={LightColors.primary} strokeWidth={1.8} />
+                      <Text style={s.captureLabel}>Take photo of receipt</Text>
+                    </Pressable>
+                  )}
+                  {cameraDenied ? null : (
+                    <Button
+                      title="Choose from gallery"
+                      variant="outline"
+                      onPress={handleGallery}
+                      fullWidth
+                    />
+                  )}
                 </View>
               ) : (
                 <View style={{ marginBottom: 16 }}>
@@ -275,12 +318,11 @@ export function ReceiptCaptureModal({
                   />
                   <Pressable
                     onPress={() => setReceiptUri(null)}
-                    style={{ marginTop: 8, paddingVertical: 8, alignItems: 'center' }}
+                    style={{ marginTop: 4, minHeight: 44, justifyContent: 'center', alignItems: 'center' }}
                     accessibilityRole="button"
                     accessibilityLabel="Replace photo"
-                    hitSlop={10}
                   >
-                    <Text style={{ fontSize: 12, fontFamily: 'Quicksand_500Medium', color: LightColors.primary }}>
+                    <Text style={{ fontSize: 14, fontFamily: 'Quicksand_700Bold', color: LightColors.primary }}>
                       Replace photo
                     </Text>
                   </Pressable>
@@ -293,6 +335,7 @@ export function ReceiptCaptureModal({
                 title="Submit & confirm pickup"
                 onPress={handleSubmit}
                 disabled={!canSubmit}
+                disabledReason={submitting ? undefined : submitBlockedReason}
                 loading={submitting}
                 loadingTitle="Uploading…"
                 fullWidth
@@ -343,9 +386,9 @@ const s = StyleSheet.create({
     color: LightColors.textPrimary,
   },
   closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: LightColors.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
@@ -455,9 +498,9 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   captureLabel: {
-    fontSize: 14,
-    fontFamily: 'Quicksand_400Regular',
-    color: LightColors.textSecondary,
+    fontSize: 15,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.primary,
     marginTop: 8,
   },
 });

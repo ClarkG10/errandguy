@@ -21,7 +21,7 @@ import { authService } from '../../services/auth.service';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { errorMessage, tooManyAttemptsMessage } from '../../utils/errorCatalog';
-import { confirmPasswordRules, newPasswordRules } from '../../utils/validation/passwordPolicy';
+import { asRule, confirmPasswordProblem, newPasswordProblem } from '../../components/auth/fieldRules';
 import { APP_CONFIG } from '../../constants/config';
 import { copy } from '../../constants/copy';
 import { LightColors } from '../../constants/colors';
@@ -69,6 +69,25 @@ export default function ResetPasswordScreen() {
     defaultValues: { password: '', confirm_password: '' },
   });
   const password = watch('password');
+  const confirmValue = watch('confirm_password');
+
+  // Pattern 9: the CTA stays disabled until the code, the new password and
+  // its confirmation all pass, and the caption names the first thing left.
+  const codeMissing = code.length !== CODE_LENGTH;
+  const passwordIssue = newPasswordProblem(password);
+  const confirmIssue = confirmPasswordProblem(confirmValue, password ?? '');
+  const formReady = !codeMissing && !passwordIssue && !confirmIssue;
+  const ctaReason = codeMissing
+    ? `Enter the ${CODE_LENGTH}-digit code from the email.`
+    : passwordIssue
+      ? password
+        ? 'Your new password needs the items still unticked above.'
+        : 'Create a new password to continue.'
+      : confirmIssue
+        ? confirmValue
+          ? "The two passwords don't match yet."
+          : 'Type the new password again to confirm.'
+        : undefined;
 
   const goBack = useCallback(
     () => (router.canGoBack() ? router.back() : router.replace('/(auth)/forgot-password')),
@@ -196,10 +215,10 @@ export default function ResetPasswordScreen() {
 
           <View className="px-6">
             <Text
-              className="text-[11px] font-montserrat-bold uppercase text-primary mb-3"
-              style={{ letterSpacing: 1.8 }}
+              className="text-[12px] font-montserrat-bold uppercase text-primary mb-3"
+              style={{ letterSpacing: 1.4 }}
             >
-              Reset password
+              Forgot password
             </Text>
             <Text
               className="text-[28px] font-montserrat-bold text-ink"
@@ -229,14 +248,12 @@ export default function ResetPasswordScreen() {
               error={codeError ?? undefined}
             />
 
-            <View className="items-center mt-4 mb-6">
+            {/* Sits right under the code (the OTP error line above already
+                reserves its own space): the old 44pt line-height plus margins
+                left a ~64pt hole between the cells and "Resend code". */}
+            <View className="items-center mb-5" style={{ minHeight: 32, justifyContent: 'center' }}>
               {!isExpired ? (
-                <Text
-                  className="text-sm font-montserrat text-textSecondary"
-                  // Same 44pt line as the resend button so the row doesn't
-                  // jump when the countdown ends.
-                  style={{ minHeight: 44, lineHeight: 44 }}
-                >
+                <Text className="text-sm font-montserrat text-textSecondary">
                   Resend code in{' '}
                   <Text
                     className="font-inter-medium text-textSecondary"
@@ -252,9 +269,10 @@ export default function ResetPasswordScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Resend code"
                   accessibilityState={{ disabled: resending, busy: resending }}
-                  hitSlop={8}
-                  className="min-h-[44px] justify-center px-4"
-                  style={{ opacity: resending ? 0.45 : 1 }}
+                  // 32pt row + 6pt slop each way = a 44pt target.
+                  hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                  className="justify-center px-4"
+                  style={{ minHeight: 32, opacity: resending ? 0.45 : 1 }}
                 >
                   <Text className="text-sm font-montserrat text-textSecondary">
                     Didn't receive it?{' '}
@@ -267,12 +285,12 @@ export default function ResetPasswordScreen() {
             <Controller
               control={control}
               name="password"
-              rules={newPasswordRules}
+              rules={{ validate: asRule(newPasswordProblem) }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <>
                   <Input
                     ref={passwordRef}
-                    label="New Password"
+                    label="New password"
                     value={value}
                     onChangeText={onChange}
                     onBlur={onBlur}
@@ -284,6 +302,7 @@ export default function ResetPasswordScreen() {
                     blurOnSubmit={false}
                     onSubmitEditing={() => confirmRef.current?.focus()}
                     error={errors.password?.message}
+                    valid={!passwordIssue}
                   />
                   <PasswordStrengthIndicator password={value} />
                 </>
@@ -293,11 +312,11 @@ export default function ResetPasswordScreen() {
             <Controller
               control={control}
               name="confirm_password"
-              rules={confirmPasswordRules(() => password)}
+              rules={{ validate: (v: string) => confirmPasswordProblem(v, password ?? '') ?? true }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <Input
                   ref={confirmRef}
-                  label="Confirm New Password"
+                  label="Confirm new password"
                   value={value}
                   onChangeText={onChange}
                   onBlur={onBlur}
@@ -306,18 +325,21 @@ export default function ResetPasswordScreen() {
                   autoComplete="new-password"
                   textContentType="newPassword"
                   returnKeyType="go"
-                  onSubmitEditing={handleSubmit(onSubmit)}
+                  onSubmitEditing={formReady ? handleSubmit(onSubmit) : undefined}
                   error={errors.confirm_password?.message}
+                  valid={!confirmIssue}
                 />
               )}
             />
 
             <Button
-              title="Reset Password"
+              title="Reset password"
               fullWidth
               size="lg"
               loading={loading}
               loadingTitle="Resetting…"
+              disabled={!formReady}
+              disabledReason={ctaReason}
               onPress={handleSubmit(onSubmit)}
             />
           </View>

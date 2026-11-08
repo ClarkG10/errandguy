@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ScrollView, Pressable, AppState } from 'react-native';
+import { View, Text, ScrollView, AppState } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Info, Zap } from 'lucide-react-native';
@@ -14,6 +14,8 @@ import { ScheduleToggle } from '../../../components/customer/ScheduleToggle';
 import { DateTimePicker } from '../../../components/customer/DateTimePicker';
 import { BookingStepIndicator } from '../../../components/customer/BookingStepIndicator';
 import { LightColors } from '../../../constants/colors';
+import { Radius } from '../../../constants/radius';
+import { PressableScale } from '../../../components/customer/booking/PressableScale';
 import { useResponsive } from '../../../constants/responsive';
 import type { Booking, ScheduleType } from '../../../types';
 import { useAuthStore } from '../../../stores/authStore';
@@ -228,20 +230,12 @@ export default function ScheduleScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      <GradientHeader title="When?" showBack fallbackHref="/(customer)/(tabs)">
-        <View className="px-5 -mt-2 pb-3">
-          <Text
-            className="text-[10px] font-montserrat-bold uppercase"
-            style={{ letterSpacing: 1.4, color: LightColors.textSecondary }}
-          >
-            New errand · Step 3
-          </Text>
-        </View>
-      </GradientHeader>
+      {/* Title only — the step indicator below already says where we are. */}
+      <GradientHeader title="When?" showBack fallbackHref="/(customer)/(tabs)" />
 
       {/* Step indicator — clamped to the same content column as the
           body so tablet edges align (mirrors type.tsx). */}
-      <View className="px-5 mt-3 mb-3">
+      <View className="px-5 mt-1 mb-4">
         <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
           <BookingStepIndicator currentStep={2} />
         </View>
@@ -304,7 +298,7 @@ export default function ScheduleScreen() {
                     const isSelected =
                       !!selectedIso && dayjs(selectedIso).isSame(pick.value, 'minute');
                     return (
-                      <Pressable
+                      <PressableScale
                         key={`${pick.label}-${idx}`}
                         accessibilityRole="button"
                         accessibilityLabel={`${pick.label} ${pick.sublabel}`}
@@ -323,26 +317,26 @@ export default function ScheduleScreen() {
                           Haptics.selectionAsync().catch(() => {});
                           setPickedAt(iso);
                         }}
-                        className="px-4 py-3"
                         // Selection = soft tint + brand border with DARK text
                         // in both states (matches the date-rail chips below,
                         // so the two rails read as one control family — and
                         // never inverts text to invisible white). Constant
-                        // border width so the row never reflows.
-                        style={({ pressed }) => [
-                          {
-                            minWidth: 110,
-                            borderRadius: 12,
-                            borderWidth: 1.5,
-                            borderColor: isSelected
-                              ? LightColors.primary
-                              : LightColors.divider,
-                            backgroundColor: isSelected
-                              ? LightColors.primaryLight
-                              : LightColors.surface,
-                          },
-                          pressed && { opacity: 0.85 },
-                        ]}
+                        // border width so the row never reflows. Plain style
+                        // on the chip: a Pressable style callback lost the
+                        // border and fill.
+                        contentStyle={{
+                          minWidth: 110,
+                          paddingHorizontal: 16,
+                          paddingVertical: 12,
+                          borderRadius: Radius.control,
+                          borderWidth: 1.5,
+                          borderColor: isSelected
+                            ? LightColors.primary
+                            : LightColors.divider,
+                          backgroundColor: isSelected
+                            ? LightColors.primaryLight
+                            : LightColors.surface,
+                        }}
                         android_ripple={{ color: `${LightColors.primary}14` }}
                       >
                         <Text
@@ -361,7 +355,7 @@ export default function ScheduleScreen() {
                         >
                           {pick.sublabel}
                         </Text>
-                      </Pressable>
+                      </PressableScale>
                     );
                   })}
                 </ScrollView>
@@ -386,6 +380,8 @@ export default function ScheduleScreen() {
             disabled={
               scheduleType === 'scheduled' && !pickedAt
             }
+            // A greyed-out Continue says why (pattern 9).
+            disabledReason="Pick a date and time to continue"
             fullWidth
           />
         </View>

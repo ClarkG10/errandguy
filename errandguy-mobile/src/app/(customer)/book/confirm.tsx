@@ -42,6 +42,11 @@ import {
 import { cancelMoneyLines, cancelReceiptMessage, type CancelPreview } from '../../../utils/cancelPreview';
 import { canRetryMatch, noRunnerRebookLine } from '../../../utils/noRunner';
 import { rebookDraft } from '../../../utils/rebookDraft';
+import { formatCurrency } from '../../../utils/formatCurrency';
+import { getErrandTypeRule } from '../../../constants/errandTypeRules';
+import { BookingSuccess, type BookingSuccessRow } from '../../../components/customer/booking/BookingSuccess';
+import { LivePulse } from '../../../components/customer/booking/LivePulse';
+import { paymentMethodLabel } from '../../../components/customer/booking/paymentMethods';
 import type { Booking, BookingStatus } from '../../../types';
 import { toast } from '../../../stores/toastStore';
 import { LightColors, Elevation } from '../../../constants/colors';
@@ -156,10 +161,14 @@ export default function ConfirmScreen() {
   const pushPermission = useNotificationPermission(
     state === 'searching' || state === 'scheduled',
   );
-  const notificationsOffLine =
-    pushPermission === 'denied' || pushPermission === 'undetermined' ? (
-      <View className="mt-3 items-center">
-        <Text className="text-xs font-montserrat text-textSecondary text-center">
+  const notificationsOff = pushPermission === 'denied' || pushPermission === 'undetermined';
+  // `inset` lines the copy up under the success screen's status text.
+  const renderNotificationsOff = (inset = false) =>
+    notificationsOff ? (
+      <View className={inset ? 'mt-3' : 'mt-3 items-center'} style={inset ? { marginLeft: 36 } : null}>
+        <Text
+          className={`text-[13px] font-montserrat text-textSecondary ${inset ? '' : 'text-center'}`}
+        >
           {state === 'scheduled'
             ? 'Notifications are off, so we can’t tell you when a runner is found.'
             : 'Notifications are off. If you leave this screen, we can’t tell you when a runner is found.'}
@@ -172,7 +181,7 @@ export default function ConfirmScreen() {
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}
         >
-          <Text className="text-sm font-montserrat-semi text-primary mt-1">
+          <Text className="text-sm font-montserrat-bold text-primary mt-1">
             Turn on notifications
           </Text>
         </Pressable>
@@ -627,12 +636,162 @@ export default function ConfirmScreen() {
   const retryRefused = state === 'no_runner' && !!verdictBooking && !canRetryMatch(verdictBooking);
   const verdictPending = state === 'no_runner' && noRunnerVerdict === null;
 
+  // ── The success moment ──────────────────────────────────────────────
+  // A freshly booked errand (first search, or a scheduled one) lands on the
+  // success screen: what was booked, then what happens next. The live search
+  // still runs underneath it — realtime, the safety-net poll, the matched
+  // hand-off to tracking — exactly as on the map layout. After "Search again"
+  // the screen is no longer news, so retries use the map layout below.
+  const showBookedSuccess = (state === 'searching' && retryStep === 1) || state === 'scheduled';
+  const summaryBooking: Booking | null =
+    activeBooking?.id === bookingId ? activeBooking : null;
+  const summaryRule = getErrandTypeRule(summaryBooking?.errand_type?.slug);
+  const summaryTotal = Number(summaryBooking?.total_amount);
+  const successFacts = [
+    bookingNumber || summaryBooking?.booking_number,
+    Number.isFinite(summaryTotal) && summaryTotal > 0 ? formatCurrency(summaryTotal) : null,
+    paymentMethodLabel(summaryBooking?.payment_method),
+  ];
+  const stopCount = summaryBooking?.stops?.length ?? 0;
+  const successRows: BookingSuccessRow[] = [
+    ...(state === 'scheduled' && Number.isFinite(scheduledAtMs)
+      ? [{ label: 'When', value: dayjs(scheduledAtMs).format('ddd, MMM D · h:mm A') }]
+      : []),
+    ...(summaryBooking?.pickup_address
+      ? [{ label: summaryRule.pickupLabel, value: summaryBooking.pickup_address }]
+      : []),
+    ...(summaryBooking?.dropoff_address && !summaryRule.singleLocation
+      ? [{ label: summaryRule.dropoffLabel, value: summaryBooking.dropoff_address }]
+      : []),
+    ...(stopCount > 0
+      ? [{ label: 'Extra stops', value: `${stopCount} more ${stopCount === 1 ? 'stop' : 'stops'}` }]
+      : []),
+  ];
+  const goToErrand = useCallback(() => {
+    if (bookingId) router.replace(`/(customer)/tracking/${bookingId}`);
+  }, [bookingId, router]);
+  const goHome = useCallback(() => router.replace('/(customer)/(tabs)'), [router]);
+
   const liveAnnouncement =
     state === 'searching' && stillLooking
       ? STILL_LOOKING_ANNOUNCEMENT
       : cancelledUnpaid
         ? `${UNPAID_CANCEL_TITLE}. ${unpaidCancelMessage(endedBooking)}`
         : STATE_ANNOUNCEMENTS[state];
+
+  const overlays = (
+    <>
+      <ConfirmModal
+        visible={showCancelModal}
+        title="Cancel this errand?"
+        // The server's preview, never a promise of our own: it names any fee
+        // and what goes back to the wallet (same body tracking shows).
+        message={
+          previewLoading
+            ? 'Checking for a cancellation fee…'
+            : cancelPreview
+              ? cancelMoneyLines(cancelPreview)
+              : 'We couldn’t check for a cancellation fee just now. If a runner has already accepted your errand, a small fee may apply. This can’t be undone.'
+        }
+        // Not confirmable until the fee is known (or its check failed and the
+        // body says one may apply), nor when the server says it can't be
+        // cancelled any more.
+        confirmDisabled={previewLoading || cancelPreview?.cancellable === false}
+        messageAction={
+          previewFailed && !previewLoading
+            ? { label: 'Check the fee again', onPress: loadCancelPreview }
+            : undefined
+        }
+        confirmLabel="Cancel errand"
+        confirmLoadingLabel="Cancelling…"
+        cancelLabel={state === 'awaiting_payment' ? 'Keep errand' : 'Keep searching'}
+        destructive
+        loading={isCancelling}
+        onConfirm={handleConfirmCancel}
+        onCancel={() => {
+          setShowCancelModal(false);
+          setCancelPreview(null);
+          setPreviewFailed(false);
+        }}
+      />
+
+      {/* Verifies a reopened GCash/Maya checkout (the "Pay" button). */}
+      <PaymentProgress {...progress} />
+    </>
+  );
+
+  if (showBookedSuccess) {
+    const searching = state === 'searching';
+    return (
+      <View style={{ flex: 1, backgroundColor: LightColors.surface }}>
+        <StatusBar barStyle="dark-content" />
+        <Text accessibilityLiveRegion="polite" style={cs.srOnly} importantForAccessibility="yes">
+          {liveAnnouncement}
+        </Text>
+        <BookingSuccess
+          title={searching ? 'Errand booked' : 'Errand scheduled'}
+          facts={successFacts}
+          rows={successRows}
+          // Review already fired the success haptic when the server took it.
+          haptic={false}
+          announcement={
+            searching
+              ? 'Errand booked. Looking for a runner nearby.'
+              : 'Errand scheduled. We will match a runner near your scheduled time.'
+          }
+          next={
+            <>
+              <View className="flex-row items-start" style={{ gap: 10 }}>
+                {searching ? (
+                  <LivePulse />
+                ) : (
+                  <View style={{ width: 26, height: 26 }} className="items-center justify-center">
+                    <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: LightColors.primary }} />
+                  </View>
+                )}
+                <View className="flex-1">
+                  <Text className="text-[15px] font-montserrat-bold text-textPrimary" style={{ lineHeight: 26 }}>
+                    {searching
+                      ? stillLooking
+                        ? 'Still looking…'
+                        : 'Looking for a runner nearby…'
+                      : 'What happens next'}
+                  </Text>
+                  <Text className="text-[13px] font-montserrat text-textSecondary leading-[19px]">
+                    {!searching
+                      ? 'We’ll match you with a runner shortly before your scheduled time. Track it anytime from Activity.'
+                      : stillLooking
+                        ? STILL_LOOKING_LINE
+                        : pushPermission === 'granted'
+                          ? 'You’ll get a notification when one accepts — you can leave this screen.'
+                          : SEARCHING_LINES[searchLineIdx]}
+                  </Text>
+                </View>
+              </View>
+              {renderNotificationsOff(true)}
+            </>
+          }
+          primary={{
+            title: searching ? 'Track errand' : 'View errand',
+            onPress: goToErrand,
+          }}
+          secondary={{ title: 'Back to home', onPress: goHome }}
+          footer={
+            searching ? (
+              <Button
+                title="Cancel errand"
+                variant="ghost"
+                onPress={handleCancel}
+                disabled={isCancelling}
+                fullWidth
+              />
+            ) : undefined
+          }
+        />
+        {overlays}
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1 }}>
@@ -763,7 +922,8 @@ export default function ConfirmScreen() {
               <View className="mt-5 w-full gap-3">
                 {checkoutUrl ? (
                   <Button
-                    title="Complete payment"
+                    // The same words as Home and tracking ("Pay ₱95.00").
+                    title={Number.isFinite(summaryTotal) && summaryTotal > 0 ? `Pay ${formatCurrency(summaryTotal)}` : 'Pay now'}
                     onPress={completePayment}
                     loading={opening}
                     loadingTitle="Opening checkout…"
@@ -803,46 +963,13 @@ export default function ConfirmScreen() {
                   Booking: {bookingNumber}
                 </Text>
               ) : null}
-              {notificationsOffLine}
+              {renderNotificationsOff()}
               <View className="mt-5 w-full">
                 <Button
                   title="Cancel errand"
                   variant="outline"
                   onPress={handleCancel}
                   disabled={isCancelling}
-                  fullWidth
-                />
-              </View>
-            </>
-          )}
-
-          {state === 'scheduled' && (
-            <>
-              <View style={{ alignSelf: 'center', alignItems: 'center' }}>
-                <SuccessCheck size={72} />
-              </View>
-              <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
-                Errand scheduled
-              </Text>
-              {Number.isFinite(scheduledAtMs) && (
-                <Text className="text-base font-montserrat-semibold text-textPrimary mt-1 text-center">
-                  {dayjs(scheduledAtMs).format('ddd, MMM D · h:mm A')}
-                </Text>
-              )}
-              <Text className="text-sm font-montserrat text-textSecondary mt-1 text-center">
-                We&apos;ll match you with a runner shortly before your scheduled
-                time. Track it anytime from Activity.
-              </Text>
-              {bookingNumber ? (
-                <Text className="text-xs font-inter text-textTertiary mt-2 text-center">
-                  Booking: {bookingNumber}
-                </Text>
-              ) : null}
-              {notificationsOffLine}
-              <View className="mt-5 w-full">
-                <Button
-                  title="Done"
-                  onPress={() => router.replace('/(customer)/(tabs)/activity')}
                   fullWidth
                 />
               </View>
@@ -858,7 +985,7 @@ export default function ConfirmScreen() {
                 <SuccessCheck celebrate size={72} />
               </View>
               <Text className="text-xl font-montserrat-bold text-textPrimary mt-4 text-center">
-                Runner Found!
+                Runner found
               </Text>
               <Text className="text-sm font-montserrat text-textSecondary mt-1 text-center">
                 Redirecting to tracking…
@@ -919,7 +1046,7 @@ export default function ConfirmScreen() {
                   />
                 )}
                 <Button
-                  title="Go Home"
+                  title="Back to home"
                   variant="outline"
                   onPress={() => router.replace('/(customer)/(tabs)')}
                   fullWidth
@@ -943,7 +1070,7 @@ export default function ConfirmScreen() {
               <View className="mt-5 w-full gap-3">
                 <Button title="Book again" onPress={handleRebook} fullWidth />
                 <Button
-                  title="Go Home"
+                  title="Back to home"
                   variant="outline"
                   onPress={() => router.replace('/(customer)/(tabs)')}
                   fullWidth
@@ -965,7 +1092,7 @@ export default function ConfirmScreen() {
               </Text>
               <View className="mt-5 w-full">
                 <Button
-                  title="Go Home"
+                  title="Back to home"
                   onPress={() => router.replace('/(customer)/(tabs)')}
                   fullWidth
                 />
@@ -975,42 +1102,7 @@ export default function ConfirmScreen() {
         </View>
       </SafeAreaView>
 
-      <ConfirmModal
-        visible={showCancelModal}
-        title="Cancel this errand?"
-        // The server's preview, never a promise of our own: it names any fee
-        // and what goes back to the wallet (same body tracking shows).
-        message={
-          previewLoading
-            ? 'Checking for a cancellation fee…'
-            : cancelPreview
-              ? cancelMoneyLines(cancelPreview)
-              : 'We couldn’t check for a cancellation fee just now. If a runner has already accepted your errand, a small fee may apply. This can’t be undone.'
-        }
-        // Not confirmable until the fee is known (or its check failed and the
-        // body says one may apply), nor when the server says it can't be
-        // cancelled any more.
-        confirmDisabled={previewLoading || cancelPreview?.cancellable === false}
-        messageAction={
-          previewFailed && !previewLoading
-            ? { label: 'Check the fee again', onPress: loadCancelPreview }
-            : undefined
-        }
-        confirmLabel="Cancel errand"
-        confirmLoadingLabel="Cancelling…"
-        cancelLabel={state === 'awaiting_payment' ? 'Keep errand' : 'Keep searching'}
-        destructive
-        loading={isCancelling}
-        onConfirm={handleConfirmCancel}
-        onCancel={() => {
-          setShowCancelModal(false);
-          setCancelPreview(null);
-          setPreviewFailed(false);
-        }}
-      />
-
-      {/* Verifies a reopened GCash/Maya checkout ("Complete payment"). */}
-      <PaymentProgress {...progress} />
+      {overlays}
     </View>
   );
 }

@@ -39,20 +39,23 @@ import { paymentService } from '../../../services/payment.service';
 import { useQuery } from '../../../hooks/useQuery';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { CacheTTL } from '../../../services/cache.service';
-import { TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
+import { TAB_BAR_HEIGHT, TAB_CONTENT_BOTTOM_INSET } from '../../../constants/tabLayout';
 import { Avatar } from '../../../components/ui/Avatar';
 import {
   ActiveBookingCard,
   isRenderableActiveBooking,
 } from '../../../components/customer/ActiveBookingCard';
 import { BookingDetailSheet } from '../../../components/customer/BookingDetailSheet';
+import { AwaitingPaymentCard } from '../../../components/customer/home/AwaitingPaymentCard';
+import { PushOffNotice } from '../../../components/customer/home/PushOffNotice';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { ErrandTypeIcon } from '../../../components/ui/ErrandTypeIcon';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { HomeSkeleton } from '../../../components/ui/Skeleton';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { Eyebrow } from '../../../components/ui/Typography';
-import { STATUS_LABELS, STATUS_COLORS } from '../../../constants/statusLabels';
+import { STATUS_COLORS, bookingStatusLabel } from '../../../constants/statusLabels';
 import { isRetiredErrandSlug } from '../../../constants/errandTypeRules';
 import { useResponsive } from '../../../constants/responsive';
 import { LightColors, Elevation } from '../../../constants/colors';
@@ -96,10 +99,11 @@ const BOOKING_STEP_COUNT = 3;
 // deliberately excluded — a "repeat" of a failed errand isn't a happy-path.
 const REPEATABLE_STATUSES = ['completed', 'delivered'];
 
-// Paged active-errand stack geometry. The zone inset is the screen's 20pt page
-// margin plus hs.activeZone's 12pt padding; the peek is how much of the next
-// card stays visible so the stack announces itself without an extra label.
-const ACTIVE_ZONE_INSET = 32;
+// Paged active-errand stack geometry. The inset is the screen's 20pt page
+// margin (the cards sit straight on the page — no tinted zone around them);
+// the peek is how much of the next card stays visible so the stack announces
+// itself without an extra label.
+const ACTIVE_ZONE_INSET = 20;
 const ACTIVE_CARD_PEEK = 30;
 const ACTIVE_CARD_GAP = 10;
 
@@ -336,6 +340,8 @@ export default function CustomerHomeScreen() {
   // draft intact, so it reappears on the next launch (until the draft
   // expires at 24h or is resumed/replaced).
   const [resumeDismissed, setResumeDismissed] = useState(false);
+  // "Notifications are off" (pattern 7) — "Not now" hides it for this session.
+  const [pushNoticeDismissed, setPushNoticeDismissed] = useState(false);
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await Promise.all([
@@ -353,6 +359,16 @@ export default function CustomerHomeScreen() {
     activeBookingsQ,
     walletBalanceQ,
   ]);
+
+  // A payment verdict on a home card: re-read the live errands so the card
+  // moves on (a confirmed payment is what sends the errand to runners).
+  // (Each query's refresh is a stable callback; the query objects are not.)
+  const refreshActiveOne = activeBookingQ.refresh;
+  const refreshActiveList = activeBookingsQ.refresh;
+  const refreshActive = useCallback(() => {
+    void refreshActiveOne();
+    void refreshActiveList();
+  }, [refreshActiveOne, refreshActiveList]);
 
   const greeting = (() => {
     const hour = new Date().getHours();
@@ -561,9 +577,19 @@ export default function CustomerHomeScreen() {
         warmTracking(booking);
         router.push(`/(customer)/tracking/${booking.id}`);
       };
-      // An unpaid GCash/Maya booking leads with its payment, scheduled or not
-      // — the live card is the one that says so.
-      const label = isAwaitingPayment(booking) ? null : scheduledWindowLabel(booking);
+      // An unpaid GCash/Maya booking leads with its payment, scheduled or not:
+      // its card's primary button is "Pay ₱95.00" (the shared checkout hook),
+      // because the payment is the one thing the errand is waiting on.
+      if (isAwaitingPayment(booking)) {
+        return (
+          <AwaitingPaymentCard
+            booking={booking}
+            onOpen={open}
+            onSettled={refreshActive}
+          />
+        );
+      }
+      const label = scheduledWindowLabel(booking);
       return label ? (
         // Same destination as the live card so the tap target is consistent
         // (tracking owns cancel / details).
@@ -577,7 +603,7 @@ export default function CustomerHomeScreen() {
         <ActiveBookingCard booking={booking} onPress={open} />
       );
     },
-    [router, withLightImpact],
+    [router, withLightImpact, refreshActive],
   );
 
   // "Frequently booked" personalization — computed purely from the
@@ -734,6 +760,20 @@ export default function CustomerHomeScreen() {
       <View className="flex-1 bg-background">
         {isFocused && <StatusBar barStyle="dark-content" />}
         <HomeSkeleton />
+        {/* Pattern 5: past ~4s of a first load, say it's the connection and
+            offer a retry, floating just above the tab bar. */}
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            left: 20,
+            right: 20,
+            bottom: insets.bottom + TAB_BAR_HEIGHT + 40,
+          }}
+        >
+          {/* On its own surface: it floats over the skeleton cards. */}
+          <SlowNetworkNotice loading onRetry={() => void onRefresh()} style={hs.floatingNotice} />
+        </View>
       </View>
     );
   }
@@ -857,7 +897,7 @@ export default function CustomerHomeScreen() {
                   {firstName}
                 </Text>
               </View>
-              {/* Notifications live in the bottom "Alerts" tab, so the header
+              {/* Notifications live in the bottom Notifications tab, so the header
                   keeps a single search affordance and stays calm + premium. */}
               <Pressable
                 hitSlop={8}
@@ -1002,13 +1042,16 @@ export default function CustomerHomeScreen() {
             ranking used to be invisible here, so the section becomes a paged
             stack once there are two — capped at 3, the same cap the server
             puts on `active_bookings`. */}
+        {/* One surface per errand, straight on the page (rule 8): the tinted,
+            bordered zone that used to wrap the card made it a card inside a
+            card. The eyebrow names the section; the card carries the rest. */}
         {activeCards.length > 0 && (
-          <View className="mx-5 mt-4" style={hs.activeZone}>
-            <Eyebrow className="ml-1 mb-2" color={LightColors.primary}>
+          <View className="mt-5">
+            <Eyebrow className="mx-5 mb-2" color={LightColors.primary}>
               {activeEyebrow}
             </Eyebrow>
             {activeCards.length === 1 ? (
-              renderActiveCard(activeCards[0])
+              <View className="px-5">{renderActiveCard(activeCards[0])}</View>
             ) : (
               <>
                 <ScrollView
@@ -1022,8 +1065,14 @@ export default function CustomerHomeScreen() {
                   // flex-start, not the default stretch: a short "booked for
                   // later" card next to a tall live one must keep its own
                   // height instead of becoming a tall box with content
-                  // stranded at the top.
-                  contentContainerStyle={{ alignItems: 'flex-start' }}
+                  // stranded at the top. The page margin lives in the
+                  // content padding so the cards scroll edge to edge and the
+                  // shadow of the peeking card is never clipped.
+                  contentContainerStyle={{
+                    alignItems: 'flex-start',
+                    paddingHorizontal: ACTIVE_ZONE_INSET,
+                    paddingBottom: 6,
+                  }}
                   onMomentumScrollEnd={(e) => {
                     setActiveCardIndex(
                       Math.round(e.nativeEvent.contentOffset.x / activeCardStride),
@@ -1064,6 +1113,15 @@ export default function CustomerHomeScreen() {
               </>
             )}
           </View>
+        )}
+
+        {/* Pattern 7: notifications refused at the OS level. Explains what
+            that costs, offers Settings, and says what still works. */}
+        {!pushNoticeDismissed && (
+          <PushOffNotice
+            onDismiss={() => setPushNoticeDismissed(true)}
+            style={{ marginHorizontal: 20, marginTop: 16 }}
+          />
         )}
 
         {/* Quick actions — 3–4 compact pills for the highest-frequency
@@ -1301,6 +1359,10 @@ export default function CustomerHomeScreen() {
             {recentBookings.map((booking) => {
               const statusColor =
                 STATUS_COLORS[booking.status] ?? LightColors.textMuted;
+              // The SAME booking-aware wording Activity and the live card use:
+              // an unpaid GCash/Maya errand is "Waiting for payment", one
+              // booked for later "Scheduled" — never "Finding a runner".
+              const statusText = bookingStatusLabel(booking);
               return (
                 <Pressable
                   key={booking.id}
@@ -1313,7 +1375,7 @@ export default function CustomerHomeScreen() {
                   style={({ pressed }) => [hs.recentCard, pressed && hs.cardPressed]}
                   onPress={withLightImpact(() => setSelectedBooking(booking))}
                   accessibilityRole="button"
-                  accessibilityLabel={`Open ${booking.errand_type?.name ?? 'errand'} from ${formatRelativeTime(booking.created_at)}`}
+                  accessibilityLabel={`Open ${booking.errand_type?.name ?? 'errand'}, ${statusText}, from ${formatRelativeTime(booking.created_at)}`}
                 >
                   {booking.errand_type?.icon_name ? (
                     <ErrandTypeIcon
@@ -1347,13 +1409,13 @@ export default function CustomerHomeScreen() {
                         className="text-[11px] font-montserrat text-textSecondary"
                         numberOfLines={1}
                       >
-                        {STATUS_LABELS[booking.status] ?? booking.status}
+                        {statusText}
                         {' · '}
                         {formatRelativeTime(booking.created_at)}
                       </Text>
                     </View>
                   </View>
-                  <Text className="text-[14px] font-inter-semi text-textPrimary">
+                  <Text className="text-[14px] font-inter-semi text-textPrimary tabular-nums">
                     {formatCurrency(booking.total_amount)}
                   </Text>
                 </Pressable>
@@ -1655,16 +1717,6 @@ const hs = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
-  // Soft tinted "zone" behind the active errand — a light-blue wash with a
-  // hairline so the live errand reads as its own band. The white
-  // ActiveBookingCard floats inside it on its own shadow.
-  activeZone: {
-    backgroundColor: LightColors.primary50,
-    borderRadius: 24,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: LightColors.primary100,
-  },
   // Recent errand card — subtle lift so each errand reads as its own
   // surface. Radius / bg / layout live in className; only the shadow (a
   // pass-through prop NativeWind keeps) is applied here.
@@ -1679,6 +1731,14 @@ const hs = StyleSheet.create({
     backgroundColor: LightColors.primary50,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // The slow-connection notice floating over the first-load skeleton.
+  floatingNotice: {
+    backgroundColor: LightColors.surface,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    ...Elevation.md,
   },
   // Page dots under the paged active-errand stack.
   activeDot: {

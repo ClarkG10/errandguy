@@ -148,12 +148,17 @@ describe('the withdraw minimum', () => {
     mockTx.mockResolvedValue({ data: { data: [] } });
     const screen = renderScreen();
 
+    // The reason sits under a Withdraw button that is visibly disabled
+    // (pattern 9), with the server's minimum in it.
     await waitFor(() =>
       expect(
-        screen.getByText('You can withdraw to GCash or Maya once you have ₱100.00 or more'),
+        screen.getByText('You can withdraw to GCash or Maya once you have ₱100.00 or more.'),
       ).toBeTruthy(),
     );
     expect(screen.queryByText(/₱40\.00 can be withdrawn/)).toBeNull();
+    expect(screen.getByTestId('wallet-withdraw').props.accessibilityState).toEqual(
+      expect.objectContaining({ disabled: true }),
+    );
   });
 
   it('shows the withdrawable amount once it reaches the minimum', async () => {

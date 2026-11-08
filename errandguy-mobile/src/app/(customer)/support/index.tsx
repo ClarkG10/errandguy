@@ -22,7 +22,8 @@ import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Badge } from '../../../components/ui/Badge';
 import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
-import { EmptyState } from '../../../components/ui/EmptyState';
+import { StatePanel } from '../../../components/customer/home/StatePanel';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
@@ -487,7 +488,12 @@ export default function SupportTicketsScreen() {
         }
         ListEmptyComponent={
           initialLoading ? (
-            <TicketsSkeleton />
+            <View>
+              <TicketsSkeleton />
+              <View className="px-5 mt-2">
+                <SlowNetworkNotice loading onRetry={() => void ticketsQ.refresh()} />
+              </View>
+            </View>
           ) : failed ? (
             <ErrorState
               title="Couldn't load your tickets"
@@ -495,11 +501,11 @@ export default function SupportTicketsScreen() {
               onRetry={() => ticketsQ.refresh()}
             />
           ) : (
-            <EmptyState
+            <StatePanel
               icon={Headphones}
               title="No support tickets yet"
-              description="Open a ticket and our team will get back to you here."
-              actionLabel="New ticket"
+              description="Open a ticket about an errand, a payment or your account. Our team replies right here."
+              actionLabel="Open a ticket"
               onAction={() => {
                 Haptics.selectionAsync().catch(() => {});
                 openCompose();

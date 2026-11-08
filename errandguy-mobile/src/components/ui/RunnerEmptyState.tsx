@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Button } from './Button';
 import { LightColors } from '../../constants/colors';
@@ -10,75 +10,74 @@ interface RunnerEmptyStateProps {
   illustration?: React.ReactNode;
   title: string;
   description?: string;
-  /** Tiny eyebrow above the title — mirrors the work-board feel
-   *  ("STATUS · WAITING FOR REQUESTS"). Optional. */
+  /** Tiny eyebrow above the title. Optional, and off by default — only pass
+   *  one that adds context the title doesn't already say. */
   eyebrow?: string;
   actionLabel?: string;
   onAction?: () => void;
-  /** Optional secondary text link rendered under the primary CTA. */
+  /** Optional outline button under the primary CTA. */
   secondaryActionLabel?: string;
   onSecondaryAction?: () => void;
+  /** Extra content under the actions, e.g. suggestion chips after a search
+   *  that found nothing. */
+  children?: React.ReactNode;
 }
 
 /**
- * Empty state tuned for the runner role.
+ * Empty state for the runner screens — pattern 1, in the same language as
+ * EmptyState (the owner's reference): a single line icon in a soft circle (or
+ * an illustration), a specific headline, a line on why it's empty, then ONE
+ * full-width primary next step and at most one outline alternative.
  *
- * The customer side uses a soft gradient disc + bright illustration —
- * it sits inside a discovery / consumer journey ("you have no errands
- * yet, book one!"). The runner experience is fundamentally different:
- * a runner is at work, watching for jobs. So this variant uses a
- * monochrome, terminal-like layout — uppercase eyebrow, hairline
- * outlined glyph, no playful colour. Reads as a status indicator on
- * a job board, not as marketing copy.
- *
- * Layout differences vs. the customer EmptyState:
- *  - No filled gradient disc; outlined slate ring instead.
- *  - Uppercase brand-letterspaced eyebrow above the title.
- *  - Tighter vertical rhythm and left-aligned-ish copy width.
- *  - Cooler slate palette (no blue tint) so it doesn't compete with
- *    the brand-blue hero or the green online indicator above it.
+ * Kept as its own component for its runner-only extras: an optional eyebrow
+ * and `children` (e.g. search suggestion chips under a no-results state).
  */
 export function RunnerEmptyState({
   icon: Icon,
   illustration,
   title,
   description,
-  eyebrow = 'Standing by',
+  eyebrow,
   actionLabel,
   onAction,
   secondaryActionLabel,
   onSecondaryAction,
+  children,
 }: RunnerEmptyStateProps) {
+  const hasPrimary = !!(actionLabel && onAction);
   return (
     <View style={s.wrap}>
       {illustration ? (
         <View style={{ marginBottom: 12 }}>{illustration}</View>
       ) : Icon ? (
-        <View style={s.glyph}>
-          <Icon size={26} color={LightColors.textTertiary} strokeWidth={1.6} />
+        <View style={s.glyph} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <Icon size={36} color={LightColors.primary} strokeWidth={1.75} />
         </View>
       ) : null}
 
-      <Text style={s.eyebrow}>{eyebrow}</Text>
-      <Text style={s.title}>{title}</Text>
+      {eyebrow ? <Text style={s.eyebrow}>{eyebrow}</Text> : null}
+      <Text style={s.title} accessibilityRole="header">
+        {title}
+      </Text>
       {description ? <Text style={s.description}>{description}</Text> : null}
 
-      {actionLabel && onAction ? (
-        <View style={{ marginTop: 18 }}>
-          <Button title={actionLabel} onPress={onAction} variant="secondary" size="md" />
+      {hasPrimary || (secondaryActionLabel && onSecondaryAction) ? (
+        <View style={s.actions}>
+          {hasPrimary ? (
+            <Button title={actionLabel as string} onPress={onAction} variant="primary" size="lg" fullWidth />
+          ) : null}
+          {secondaryActionLabel && onSecondaryAction ? (
+            <Button
+              title={secondaryActionLabel}
+              onPress={onSecondaryAction}
+              variant={hasPrimary ? 'outline' : 'primary'}
+              size="lg"
+              fullWidth
+            />
+          ) : null}
         </View>
       ) : null}
-      {secondaryActionLabel && onSecondaryAction ? (
-        <Pressable
-          onPress={onSecondaryAction}
-          accessibilityRole="button"
-          accessibilityLabel={secondaryActionLabel}
-          hitSlop={8}
-          style={s.secondaryLink}
-        >
-          <Text style={s.secondaryLinkText}>{secondaryActionLabel}</Text>
-        </Pressable>
-      ) : null}
+      {children}
     </View>
   );
 }
@@ -88,53 +87,42 @@ const s = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 56,
+    paddingHorizontal: 24,
+    paddingVertical: 48,
   },
   glyph: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    borderWidth: 1.2,
-    borderColor: LightColors.dividerStrong,
-    backgroundColor: LightColors.background,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: LightColors.primary50,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 18,
+    marginBottom: 20,
   },
   eyebrow: {
-    fontSize: 10.5,
+    fontSize: 12,
     fontFamily: 'Quicksand_700Bold',
-    letterSpacing: 1.6,
+    letterSpacing: 1.2,
     textTransform: 'uppercase',
-    color: LightColors.textTertiary,
+    color: LightColors.textSecondary,
     marginBottom: 8,
   },
   title: {
-    fontSize: 16,
+    fontSize: 20,
+    lineHeight: 26,
     fontFamily: 'Quicksand_700Bold',
     color: LightColors.textPrimary,
     textAlign: 'center',
-    marginBottom: 6,
-    letterSpacing: -0.2,
+    letterSpacing: -0.3,
   },
   description: {
-    fontSize: 13,
+    marginTop: 8,
+    fontSize: 15,
     fontFamily: 'Quicksand_400Regular',
-    color: LightColors.textTertiary,
+    color: LightColors.textSecondary,
     textAlign: 'center',
-    lineHeight: 18,
-    maxWidth: 280,
+    lineHeight: 21,
+    maxWidth: 320,
   },
-  secondaryLink: {
-    marginTop: 12,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  secondaryLinkText: {
-    fontSize: 13,
-    fontFamily: 'Quicksand_700Bold',
-    color: LightColors.primary,
-    letterSpacing: 0.1,
-  },
+  actions: { alignSelf: 'center', width: '100%', maxWidth: 360, gap: 10, marginTop: 24 },
 });

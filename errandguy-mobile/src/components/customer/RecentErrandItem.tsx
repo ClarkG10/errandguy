@@ -69,8 +69,10 @@ export const RecentErrandItem = memo(function RecentErrandItem({
                 marginRight: 6,
               }}
             />
+            {/* textSecondary, not textTertiary: the status is something people
+                must read (rule 15). */}
             <Text
-              className="text-[11px] font-inter-semi text-textTertiary"
+              className="text-[12px] font-montserrat-semi text-textSecondary"
               numberOfLines={1}
             >
               {label} · {formatRelativeTime(booking.created_at)}
@@ -78,7 +80,7 @@ export const RecentErrandItem = memo(function RecentErrandItem({
           </View>
         </View>
         <View className="items-end ml-2">
-          <Text className="text-sm font-inter-semi text-textPrimary">
+          <Text className="text-sm font-inter-semi text-textPrimary tabular-nums">
             {formatCurrency(booking.total_amount)}
           </Text>
           <ChevronRight

@@ -43,12 +43,15 @@ export default function TermsScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      <GradientHeader title="Terms & Privacy" showBack fallbackHref="/(runner)/(tabs)/profile" />
+      <GradientHeader title="Terms & privacy" showBack fallbackHref="/(runner)/(tabs)/profile" />
 
       <ScrollView
-        className="flex-1 px-5"
+        className="flex-1"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
+          // Gutter on the content, not the ScrollView: as a className it was
+          // applied twice on web and pushed the column in to 40pt.
+          paddingHorizontal: 20,
           paddingBottom: insets.bottom + 40,
           maxWidth: contentMaxWidth,
           width: '100%',

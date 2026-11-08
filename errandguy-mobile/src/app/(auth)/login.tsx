@@ -28,6 +28,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { errorMessage, tooManyAttemptsMessage } from '../../utils/errorCatalog';
 import { isPhMobile } from '../../utils/phone';
+import { identifierProblem, signInPasswordProblem, asRule } from '../../components/auth/fieldRules';
 import { LightColors } from '../../constants/colors';
 import type { User } from '../../types';
 
@@ -35,6 +36,10 @@ interface LoginFormData {
   identifier: string;
   password: string;
 }
+
+/** Wrong sign-in details — said under the password, with what to do. */
+const WRONG_CREDENTIALS =
+  "That phone/email and password don't match. Check both, or tap Forgot password.";
 
 // Any spelling of a PH mobile (09…, +63 9…) — the service sends it as +639….
 const isPhone = (val: string) => isPhMobile(val);
@@ -93,6 +98,7 @@ export default function LoginScreen() {
     biometricIcon: BiometricIcon,
   } = useBiometricUnlock();
   const { contentMaxWidth } = useResponsive();
+  const reducedMotionLogin = useReducedMotion();
   const [loading, setLoading] = useState(false);
   // Success is a separate flag: the brand curtain must only rise once
   // the login is CONFIRMED — on failure the Button's own spinner is the
@@ -114,6 +120,7 @@ export default function LoginScreen() {
     reset,
     setError,
     getValues,
+    watch,
   } = useForm<LoginFormData>({
     // Validate on blur (matches register.tsx) so format errors surface
     // before the user reaches the CTA.
@@ -121,6 +128,17 @@ export default function LoginScreen() {
     defaultValues: { identifier: '', password: '' },
   });
   const passwordRef = useRef<InputHandle>(null);
+
+  // Pattern 9: the CTA stays disabled until both fields pass, and says which
+  // one is still missing — the same checks the fields show inline.
+  const identifierValue = watch('identifier');
+  const passwordValue = watch('password');
+  const identifierIssue = identifierProblem(identifierValue);
+  const passwordIssue = signInPasswordProblem(passwordValue);
+  const formReady = !identifierIssue && !passwordIssue;
+  // The caption is the fix itself, so it helps even before a field has been
+  // left (inline errors appear on blur).
+  const ctaReason = identifierIssue ?? passwordIssue ?? undefined;
 
   useEffect(() => {
     if (rememberedCredentials?.identifier) {
@@ -178,6 +196,12 @@ export default function LoginScreen() {
           } else if (field === 'password') {
             setError('password', { message: msg });
             hasFieldError = true;
+          } else if (field === 'credentials') {
+            // Wrong phone/email or password: the server can't say which, so
+            // anchor it under the password (the field being retyped) — same
+            // as the 401 below, never a toast floating away from the form.
+            setError('password', { message: WRONG_CREDENTIALS });
+            hasFieldError = true;
           }
         }
         if (hasFieldError) return;
@@ -187,9 +211,7 @@ export default function LoginScreen() {
       // being retyped (same inline pattern as the 422 mapping above)
       // instead of a toast that floats away from the form.
       if (status === 401) {
-        setError('password', {
-          message: 'Incorrect phone/email or password. Check and try again.',
-        });
+        setError('password', { message: WRONG_CREDENTIALS });
         return;
       }
 
@@ -409,16 +431,13 @@ export default function LoginScreen() {
           <Controller
             control={control}
             name="identifier"
-            rules={{
-              required: 'Phone or email is required',
-              validate: (val) => isPhone(val) || isEmail(val) || 'Enter a valid phone or email',
-            }}
+            rules={{ validate: asRule(identifierProblem) }}
             render={({ field: { onChange, onBlur, value } }) => {
               // Autofill/content hints can track the likely identifier type…
               const looksLikePhone = /^(\+63|09)\d/.test(value.trim());
               return (
                 <Input
-                  label="Phone or Email"
+                  label="Phone or email"
                   value={value}
                   onChangeText={onChange}
                   onBlur={onBlur}
@@ -441,6 +460,7 @@ export default function LoginScreen() {
                   blurOnSubmit={false}
                   onSubmitEditing={() => passwordRef.current?.focus()}
                   error={errors.identifier?.message}
+                  valid={!identifierIssue}
                 />
               );
             }}
@@ -449,10 +469,7 @@ export default function LoginScreen() {
           <Controller
             control={control}
             name="password"
-            rules={{
-              required: 'Password is required',
-              minLength: { value: 8, message: 'At least 8 characters' },
-            }}
+            rules={{ validate: asRule(signInPasswordProblem) }}
             render={({ field: { onChange, onBlur, value } }) => (
               <Input
                 ref={passwordRef}
@@ -468,7 +485,7 @@ export default function LoginScreen() {
                 // locked state the keyboard would stack under Face ID.
                 autoFocus={!!rememberedCredentials?.identifier && !canBiometricUnlock}
                 returnKeyType="go"
-                onSubmitEditing={handleSubmit(onSubmit)}
+                onSubmitEditing={formReady ? handleSubmit(onSubmit) : undefined}
                 error={errors.password?.message}
               />
             )}
@@ -494,7 +511,7 @@ export default function LoginScreen() {
               accessibilityState={{ checked: rememberMe }}
             >
               <CheckboxSquare checked={rememberMe} />
-              <Text className="text-[13px] font-montserrat text-textTertiary ml-2">Remember me</Text>
+              <Text className="text-[13px] font-montserrat text-textSecondary ml-2">Remember me</Text>
             </Pressable>
             <Pressable
               onPress={() => {
@@ -535,12 +552,12 @@ export default function LoginScreen() {
               accessibilityState={{ checked: enableBiometric }}
             >
               <CheckboxSquare checked={enableBiometric} />
-              <BiometricIcon size={15} color={LightColors.textTertiary} style={{ marginLeft: 8 }} />
+              <BiometricIcon size={16} color={LightColors.textSecondary} style={{ marginLeft: 8 }} />
               <View className="flex-1 ml-1.5">
-                <Text className="text-[13px] font-montserrat text-textTertiary">
+                <Text className="text-[13px] font-montserrat text-textSecondary">
                   Unlock with {biometricLabel} next time
                 </Text>
-                <Text className="text-[12px] font-montserrat text-textTertiary mt-0.5">
+                <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5">
                   Keeps you remembered on this device
                 </Text>
               </View>
@@ -548,11 +565,20 @@ export default function LoginScreen() {
           )}
 
           {/* Primary CTA */}
-          <Button title="Log in" fullWidth size="lg" loading={loading} loadingTitle="Logging in…" onPress={handleSubmit(onSubmit)} />
+          <Button
+            title="Log in"
+            fullWidth
+            size="lg"
+            loading={loading}
+            loadingTitle="Logging in…"
+            disabled={!formReady}
+            disabledReason={ctaReason}
+            onPress={handleSubmit(onSubmit)}
+          />
 
           {/* Sign up */}
           <View className="flex-row items-center justify-center mt-auto pt-8 pb-2">
-            <Text className="text-[14px] font-montserrat text-textTertiary">New here? </Text>
+            <Text className="text-[14px] font-montserrat text-textSecondary">New here? </Text>
             <Pressable
               onPress={() => router.push('/(auth)/register')}
               style={({ pressed }) => pressed && { opacity: 0.55 }}
@@ -576,16 +602,30 @@ export default function LoginScreen() {
           accessibilityLiveRegion="polite"
           accessibilityLabel={`Unlocking with ${biometricLabel}`}
         >
+          {/* Layout in style: NativeWind drops className on MotiView
+              (a Reanimated component), so this disc rendered unsized and
+              unfilled. Breathing loop only when motion is allowed. */}
           <MotiView
-            from={{ scale: 0.92, opacity: 0.7 }}
-            animate={{ scale: 1.06, opacity: 1 }}
-            transition={{ loop: true, repeatReverse: true, type: 'timing', duration: 900 }}
-            className="w-20 h-20 rounded-full bg-primary50 items-center justify-center"
+            from={{ scale: reducedMotionLogin ? 1 : 0.92, opacity: reducedMotionLogin ? 1 : 0.7 }}
+            animate={{ scale: reducedMotionLogin ? 1 : 1.06, opacity: 1 }}
+            transition={
+              reducedMotionLogin
+                ? { type: 'timing', duration: 0 }
+                : { loop: true, repeatReverse: true, type: 'timing', duration: 900 }
+            }
+            style={{
+              width: 80,
+              height: 80,
+              borderRadius: 40,
+              backgroundColor: LightColors.primary50,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
           >
             <BiometricIcon size={34} color={LightColors.primary} strokeWidth={2} />
           </MotiView>
           <Text className="text-[15px] font-montserrat-semi text-ink mt-5">Unlocking…</Text>
-          <Text className="text-[13px] font-montserrat text-textTertiary mt-1">
+          <Text className="text-[13px] font-montserrat text-textSecondary mt-1">
             Verifying with {biometricLabel}
           </Text>
         </View>

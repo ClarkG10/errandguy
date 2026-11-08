@@ -30,6 +30,7 @@ import { bookingService } from '../../services/booking.service';
 import { chatService } from '../../services/chat.service';
 import { userService } from '../../services/user.service';
 import { paymentService } from '../../services/payment.service';
+import { configService } from '../../services/config.service';
 import { useQuery } from '../../hooks/useQuery';
 import { useDebounce } from '../../hooks/useDebounce';
 import { CacheTTL } from '../../services/cache.service';
@@ -37,8 +38,10 @@ import { useAuthStore } from '../../stores/authStore';
 import { Input, type InputHandle } from '../../components/ui/Input';
 import { Card } from '../../components/ui/Card';
 import { Avatar } from '../../components/ui/Avatar';
-import { EmptyState } from '../../components/ui/EmptyState';
-import { Illustration } from '../../components/ui/Illustration';
+import { Button } from '../../components/ui/Button';
+import { SlowNetworkNotice } from '../../components/ui/SlowNetworkNotice';
+import { closestMatch } from '../../components/customer/home/searchSuggest';
+import { StatePanel } from '../../components/customer/home/StatePanel';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { Skeleton, SkeletonCircle } from '../../components/ui/Skeleton';
 import { GradientHeader } from '../../components/ui/GradientHeader';
@@ -49,9 +52,35 @@ import { storage } from '../../utils/storage';
 import { LightColors } from '../../constants/colors';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatRelativeTime } from '../../utils/formatDate';
-import { STATUS_LABELS } from '../../constants/statusLabels';
+import {
+  AWAITING_PAYMENT_LABEL,
+  SCHEDULED_LABEL,
+  STATUS_LABELS,
+} from '../../constants/statusLabels';
 import { ledgerIcon, isLedgerCredit } from '../../utils/walletLedger';
-import type { Booking, Conversation, SavedAddress, WalletTransaction } from '../../types';
+import type { Booking, Conversation, ErrandType, SavedAddress, WalletTransaction } from '../../types';
+
+// What each category is searched by — shared by the result list and the
+// "did you mean" check (a correction is only offered if it finds something).
+const bookingFields = (b: Booking) => [
+  b.errand_type?.name,
+  b.booking_number,
+  STATUS_LABELS[b.status] ?? b.status,
+  b.pickup_address,
+  b.dropoff_address,
+];
+const conversationFields = (c: Conversation) => [
+  c.counterparty?.full_name,
+  c.booking_number,
+  c.last_message?.preview,
+  c.errand_type?.name,
+];
+const addressFields = (a: SavedAddress) => [a.label, a.address];
+const transactionFields = (t: WalletTransaction) => [
+  t.display_description ?? t.description,
+  t.type.replace(/_/g, ' '),
+  String(Math.abs(t.amount)),
+];
 
 // Persisted recent-search terms (last 6). Bumped key on shape change.
 const RECENT_KEY = 'search:recent:v1';
@@ -182,6 +211,19 @@ export default function SearchScreen() {
     { staleTime: 30_000, ttl: CacheTTL.MEDIUM },
   );
 
+  // The errand-type catalogue — the same key and fetcher Home uses, so this is
+  // a cache read. Feeds "did you mean", the "try searching" chips and the
+  // "Book a … errand" path when a search names a service never booked yet.
+  const errandTypesQ = useQuery<ErrandType[]>(
+    ['errand-types'],
+    async () => {
+      const res = await configService.getErrandTypes();
+      const t = res.data?.data;
+      return Array.isArray(t) ? t : [];
+    },
+    { staleTime: 60 * 60 * 1000, ttl: CacheTTL.STATIC },
+  );
+
   // Destructure stable pieces so the sections memo doesn't recompute on
   // every render (the query objects themselves are recreated each render).
   const { data: bookingsData, error: bookingsError, loading: bookingsLoading, refresh: refreshBookings } = bookingsQ;
@@ -303,13 +345,7 @@ export default function SearchScreen() {
       bookingsError,
       !!bookingsData,
       bookingsData ?? [],
-      (b) => [
-        b.errand_type?.name,
-        b.booking_number,
-        STATUS_LABELS[b.status] ?? b.status,
-        b.pickup_address,
-        b.dropoff_address,
-      ],
+      bookingFields,
       (b) => ({ type: 'booking', key: `b-${b.id}`, booking: b }),
       () => refreshBookings(),
     );
@@ -320,12 +356,7 @@ export default function SearchScreen() {
       convError,
       !!convData,
       convData ?? [],
-      (c) => [
-        c.counterparty?.full_name,
-        c.booking_number,
-        c.last_message?.preview,
-        c.errand_type?.name,
-      ],
+      conversationFields,
       (c) => ({ type: 'conversation', key: `c-${c.booking_id}`, conversation: c }),
       () => refreshConv(),
     );
@@ -336,7 +367,7 @@ export default function SearchScreen() {
       addrError,
       !!addrData,
       addrData ?? [],
-      (a) => [a.label, a.address],
+      addressFields,
       (a) => ({ type: 'address', key: `a-${a.id}`, address: a }),
       () => refreshAddr(),
     );
@@ -347,11 +378,7 @@ export default function SearchScreen() {
       txError,
       !!txData,
       txData ?? [],
-      (t) => [
-        t.display_description ?? t.description,
-        t.type.replace(/_/g, ' '),
-        String(Math.abs(t.amount)),
-      ],
+      transactionFields,
       (t) => ({ type: 'transaction', key: `t-${t.id}`, tx: t }),
       () => refreshTx(),
     );
@@ -373,6 +400,73 @@ export default function SearchScreen() {
     (convLoading && !convData) ||
     (addrLoading && !addrData) ||
     (txLoading && !txData);
+
+  // ── Pattern 6: no results ─────────────────────────────────────────────
+  // How many results a term would find across everything loaded.
+  const countMatches = useCallback(
+    (term: string) =>
+      rankAndCount(term, bookingsData ?? [], bookingFields, 1).total +
+      rankAndCount(term, convData ?? [], conversationFields, 1).total +
+      rankAndCount(term, addrData ?? [], addressFields, 1).total +
+      rankAndCount(term, txData ?? [], transactionFields, 1).total,
+    [bookingsData, convData, addrData, txData],
+  );
+
+  const noResults = useMemo(() => {
+    if (!debouncedQ || sections.length > 0 || anyLoadingFirst) return null;
+    const catalogue = (errandTypesQ.data ?? []).filter((t) => t.is_active);
+    // The app's own words, best first: the customer's errand types, the
+    // catalogue, statuses, saved-place labels, then their recent searches.
+    const bookedTypes = Array.from(
+      new Set((bookingsData ?? []).map((b) => b.errand_type?.name).filter(Boolean) as string[]),
+    );
+    const vocabulary = [
+      ...bookedTypes,
+      ...catalogue.map((t) => t.name),
+      ...Object.values(STATUS_LABELS),
+      AWAITING_PAYMENT_LABEL,
+      SCHEDULED_LABEL,
+      ...(addrData ?? []).map((a) => a.label),
+      ...recent,
+    ];
+    const guess = closestMatch(debouncedQ, vocabulary);
+    // Only offer a correction that actually finds something.
+    const correction = guess && countMatches(guess) > 0 ? guess : null;
+    // A service they have never booked can't be found — but it can be booked.
+    const ql = debouncedQ.toLowerCase();
+    const bookable = correction
+      ? null
+      : catalogue.find(
+          (t) =>
+            t.name.toLowerCase().includes(ql) ||
+            closestMatch(debouncedQ, [t.name]) !== null,
+        ) ?? null;
+    // "Try searching": words that are guaranteed to find something.
+    const chips = Array.from(
+      new Set([
+        ...bookedTypes,
+        ...recent.filter((r) => r.toLowerCase() !== ql),
+        ...(addrData ?? []).map((a) => a.label),
+      ]),
+    )
+      .filter((t) => t && t.toLowerCase() !== correction?.toLowerCase() && countMatches(t) > 0)
+      .slice(0, 5);
+    return { correction, bookable, chips };
+  }, [
+    debouncedQ,
+    sections.length,
+    anyLoadingFirst,
+    errandTypesQ.data,
+    bookingsData,
+    addrData,
+    recent,
+    countMatches,
+  ]);
+
+  const searchFor = useCallback((term: string) => {
+    Haptics.selectionAsync().catch(() => {});
+    setQuery(term);
+  }, []);
 
   // Memoized so the SectionList's section headers keep cell-level bail-out on
   // every keystroke re-render (renderRow was already hoisted; this matches it).
@@ -643,22 +737,30 @@ export default function SearchScreen() {
               ))}
             </View>
           ) : (
-            <View className="items-center px-8 pt-16">
-              <View className="w-16 h-16 rounded-full bg-divider items-center justify-center">
-                <SearchIcon size={28} color={LightColors.primary} strokeWidth={1.9} />
-              </View>
-              <Text className="text-base font-montserrat-bold text-textPrimary mt-4 text-center">
-                Search everything
-              </Text>
-              <Text className="text-sm font-montserrat text-textSecondary mt-2 text-center leading-5">
-                Find your errands, messages, saved places, and wallet activity in one place.
-              </Text>
+            // Same icon-in-a-soft-circle language as the app's other states.
+            <View className="pt-6">
+              <StatePanel
+                icon={SearchIcon}
+                title="Search everything"
+                description="Find your errands, messages, saved places and wallet activity in one place."
+              />
             </View>
           )}
         </ScrollView>
       ) : anyLoadingFirst && sections.length === 0 ? (
-        // ── First-data skeleton ──
+        // ── First-data skeleton ── (pattern 5 notice past ~4s)
         <View className="pt-2">
+          <View className="px-5 mb-2.5">
+            <SlowNetworkNotice
+              loading
+              onRetry={() => {
+                refreshBookings();
+                refreshConv();
+                refreshAddr();
+                refreshTx();
+              }}
+            />
+          </View>
           {[1, 2, 3, 4, 5].map((i) => (
             <View
               key={i}
@@ -676,14 +778,105 @@ export default function SearchScreen() {
           ))}
         </View>
       ) : sections.length === 0 ? (
-        // ── No matches anywhere ──
-        <EmptyState
-          illustration={<Illustration name="empty-search" size={168} />}
-          title="No results"
-          description={`Nothing matches “${debouncedQ}”. Try a booking number, name, or place.`}
-          actionLabel="Clear search"
-          onAction={() => setQuery('')}
-        />
+        // ── Pattern 6: no matches anywhere ──
+        // Echo the query, correct an obvious typo against the app's own
+        // words, offer searches that are known to find something, and end in
+        // ONE primary next step.
+        <ScrollView
+          className="flex-1"
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
+          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 40 }}
+          showsVerticalScrollIndicator={false}
+          testID="search-no-results"
+        >
+          <Text
+            className="text-[20px] font-montserrat-bold text-textPrimary"
+            style={{ lineHeight: 26 }}
+            accessibilityRole="header"
+          >
+            No results for “{debouncedQ}”
+          </Text>
+          {noResults?.correction ? (
+            <Text className="text-[15px] font-montserrat text-textSecondary mt-2">
+              Did you mean{' '}
+              <Text
+                className="font-montserrat-bold text-primary underline"
+                onPress={() => searchFor(noResults.correction as string)}
+                accessibilityRole="link"
+              >
+                {noResults.correction}
+              </Text>
+              ?
+            </Text>
+          ) : (
+            <Text className="text-[15px] font-montserrat text-textSecondary mt-2 leading-[22px]">
+              {noResults?.bookable
+                ? `You haven’t booked a ${noResults.bookable.name} errand yet, so there’s nothing to find.`
+                : 'Nothing in your errands, messages, saved places or wallet matches that. Try a booking number, a runner’s name or a place.'}
+            </Text>
+          )}
+
+          {noResults && noResults.chips.length > 0 ? (
+            <View className="mt-7">
+              <Text
+                className="text-[15px] font-montserrat-bold text-textPrimary mb-3"
+                accessibilityRole="header"
+              >
+                Try searching
+              </Text>
+              <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+                {noResults.chips.map((chip) => (
+                  <Pressable
+                    key={chip}
+                    onPress={() => searchFor(chip)}
+                    className="px-4 rounded-full border border-divider bg-surface justify-center active:opacity-70"
+                    style={{ minHeight: 44 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Search for ${chip}`}
+                  >
+                    <Text className="text-[14px] font-montserrat-semi text-textPrimary">
+                      {/* First letter only — "home" → "Home", "Buy for me" stays. */}
+                      {chip.charAt(0).toUpperCase() + chip.slice(1)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          <View className="mt-8">
+            {noResults?.correction ? (
+              <Button
+                title={`Search “${noResults.correction}”`}
+                onPress={() => searchFor(noResults.correction as string)}
+                fullWidth
+              />
+            ) : noResults?.bookable ? (
+              <Button
+                title={`Book a ${noResults.bookable.name} errand`}
+                onPress={() =>
+                  router.push({
+                    pathname: '/(customer)/book/type',
+                    params: { preselected: noResults.bookable!.id },
+                  } as any)
+                }
+                fullWidth
+              />
+            ) : (
+              <Button
+                title="Clear search"
+                variant="outline"
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setQuery('');
+                  inputRef.current?.focus();
+                }}
+                fullWidth
+              />
+            )}
+          </View>
+        </ScrollView>
       ) : (
         <SectionList
           sections={sections}

@@ -153,12 +153,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: LightColors.textSecondary,
     fontFamily: 'Quicksand_500Medium',
+    // "Uploading… 42%" — digits keep their width as the count moves.
+    fontVariant: ['tabular-nums'],
   },
   percent: {
     fontSize: 12,
-    color: LightColors.textTertiary,
+    color: LightColors.textSecondary,
     fontFamily: 'Quicksand_500Medium',
     marginLeft: 8,
+    fontVariant: ['tabular-nums'],
   },
   track: {
     width: '100%',

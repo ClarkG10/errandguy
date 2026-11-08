@@ -73,19 +73,17 @@ export function PayoutDestinationForm({
               accessibilityRole="radio"
               accessibilityLabel={PAYOUT_CHANNEL_LABELS[channel]}
               accessibilityState={{ selected }}
-              // Layout stays in className — a Pressable styled only via
-              // style={() => [obj]} drops flexDirection/backgroundColor.
-              className="flex-row items-center pl-1.5 pr-3 py-1.5"
-              style={({ pressed }) => [
-                {
-                  borderRadius: Radius.chip,
-                  borderWidth: 1.5,
-                  borderColor: selected ? LightColors.primary : LightColors.divider,
-                  backgroundColor: selected ? LightColors.primaryLight : LightColors.surface,
-                  minHeight: 44,
-                },
-                pressed ? { opacity: 0.92 } : null,
-              ]}
+              // Layout in className, colour in a PLAIN style object: a style
+              // function next to className dropped the selected fill on web,
+              // so the chosen method didn't look chosen. Press via `active:`.
+              className="flex-row items-center pl-1.5 pr-3 py-1.5 active:opacity-90"
+              style={{
+                borderRadius: Radius.chip,
+                borderWidth: 1.5,
+                borderColor: selected ? LightColors.primary : LightColors.divider,
+                backgroundColor: selected ? LightColors.primaryLight : LightColors.surface,
+                minHeight: 44,
+              }}
             >
               {channel === 'bank' ? (
                 <View
@@ -145,17 +143,14 @@ export function PayoutDestinationForm({
                       accessibilityRole="radio"
                       accessibilityLabel={bank}
                       accessibilityState={{ selected }}
-                      className="flex-row items-center px-3 py-2"
-                      style={({ pressed }) => [
-                        {
-                          borderRadius: Radius.chip,
-                          borderWidth: 1.5,
-                          borderColor: selected ? LightColors.primary : LightColors.divider,
-                          backgroundColor: selected ? LightColors.primaryLight : LightColors.surface,
-                          minHeight: 40,
-                        },
-                        pressed ? { opacity: 0.92 } : null,
-                      ]}
+                      className="flex-row items-center px-3 py-2 active:opacity-90"
+                      style={{
+                        borderRadius: Radius.chip,
+                        borderWidth: 1.5,
+                        borderColor: selected ? LightColors.primary : LightColors.divider,
+                        backgroundColor: selected ? LightColors.primaryLight : LightColors.surface,
+                        minHeight: 40,
+                      }}
                     >
                       <Text
                         className={`text-[13px] ${

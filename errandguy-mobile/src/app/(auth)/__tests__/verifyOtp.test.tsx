@@ -112,7 +112,7 @@ describe('verify email after sign-up', () => {
     await act(async () => {
       fireEvent.press(screen.getByText('Send code to this email'));
     });
-    expect(screen.getByText('Enter a valid email address.')).toBeTruthy();
+    expect(screen.getByText('Add a domain after the @, like name@gmail.com')).toBeTruthy();
     expect(updateProfile).not.toHaveBeenCalled();
   });
 });

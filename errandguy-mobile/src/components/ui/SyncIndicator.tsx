@@ -7,7 +7,7 @@ import {
   type ViewStyle,
   type StyleProp,
 } from 'react-native';
-import { RotateCw, CloudOff } from 'lucide-react-native';
+import { RotateCw, WifiOff } from 'lucide-react-native';
 import { LightColors } from '../../constants/colors';
 import { Radius } from '../../constants/radius';
 
@@ -16,13 +16,13 @@ import { Radius } from '../../constants/radius';
  * stale-while-revalidate refresh (which is otherwise invisible) reads as
  * intentional rather than a frozen screen:
  *
- *   • offline        → "Offline — showing saved data" (calm, neutral ink)
+ *   • offline        → "Offline — showing what you had" (calm, neutral ink)
  *   • syncing        → animated dots + "Syncing…"
  *   • settled        → "Updated just now" / "Updated 5m ago"
  *   • error-w/-cache → "Couldn't refresh · Tap to retry" (calls onRetry)
  *
  * `offline` outranks both syncing and error: while the device is disconnected a
- * failed refresh is expected, so the honest, un-alarming "showing saved data"
+ * failed refresh is expected, so the honest, un-alarming "showing what you had"
  * caption is more useful than a retry prompt that can't succeed.
  *
  * Designed to sit quietly under a header — 11px, tertiary ink, pill-shaped,
@@ -41,7 +41,7 @@ interface SyncIndicatorProps {
   /** A refresh failed but cached data is still shown. */
   error?: boolean;
   /** Device is offline (or last fetch failed offline) and cached data is being
-   *  shown. Renders a calm "showing saved data" caption; outranks syncing/error.
+   *  shown. Renders a calm "showing what you had" caption; outranks syncing/error.
    *  Feed from useQuery's `servedFromCacheOffline`. */
   offline?: boolean;
   /** Tapped in the error state. */
@@ -95,10 +95,10 @@ export function SyncIndicator({
       <View
         style={containerStyle}
         accessibilityRole="text"
-        accessibilityLabel="Offline. Showing saved data."
+        accessibilityLabel="Offline. Showing what you had last."
       >
-        <CloudOff size={12} color={LightColors.textTertiary} strokeWidth={2} />
-        <Text style={styles.text}>Offline — showing saved data</Text>
+        <WifiOff size={12} color={LightColors.textSecondary} strokeWidth={2} />
+        <Text style={styles.text}>Offline — showing what you had</Text>
       </View>
     );
   }
@@ -148,7 +148,8 @@ const styles = StyleSheet.create({
   },
   text: {
     fontSize: 11,
-    color: LightColors.textTertiary,
+    // textSecondary: people read this to know how fresh the screen is.
+    color: LightColors.textSecondary,
     fontFamily: 'Quicksand_500Medium',
     letterSpacing: 0.1,
   },

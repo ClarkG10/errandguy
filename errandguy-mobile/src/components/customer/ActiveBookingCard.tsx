@@ -7,20 +7,38 @@ import {
   Easing,
   StyleSheet,
 } from 'react-native';
-import { ArrowRight, MapPin, Search, Star } from 'lucide-react-native';
+import { ArrowRight, Star } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Avatar } from '../ui/Avatar';
+import { Button } from '../ui/Button';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { LightColors, Elevation } from '../../constants/colors';
 import { statusHeadline } from '../../constants/statusLabels';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatTime } from '../../utils/formatDate';
 import { formatRating } from '../../utils/rating';
-import { isAwaitingPayment } from '../../utils/bookingPayment';
+import { isAwaitingPayment, paymentDeadlineLine } from '../../utils/bookingPayment';
+import { awaitingPaymentHeadline } from './home/awaitingPayment';
 import type { Booking, BookingStatus } from '../../types';
+
+/** The one thing this errand needs from the customer right now, e.g. "Pay ₱95.00". */
+export interface ActiveBookingCardAction {
+  label: string;
+  onPress: () => void;
+  loading?: boolean;
+  loadingLabel?: string;
+  accessibilityHint?: string;
+}
 
 interface ActiveBookingCardProps {
   booking: Booking;
   onPress: () => void;
+  /**
+   * When set, the card ends in a full-width primary button for it, and the
+   * small "View" pill goes (rule 10: the primary action is the one needed
+   * now). The rest of the card still opens tracking.
+   */
+  primaryAction?: ActiveBookingCardAction;
 }
 
 type Phase = 'searching' | 'matched' | 'pickup' | 'transit' | 'done' | 'cancelled';
@@ -80,7 +98,7 @@ const TEXT_PRIMARY = LightColors.textPrimary;
 const TEXT_SECONDARY = LightColors.textTertiary;
 const TRACK_EMPTY = LightColors.divider;
 
-export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) {
+export function ActiveBookingCard({ booking, onPress, primaryAction }: ActiveBookingCardProps) {
   const phase = PHASE_BY_STATUS[booking.status];
   const filled = FILLED_SEGMENTS[phase];
   const runnerName = booking.runner?.full_name?.split(' ')[0] ?? null;
@@ -91,11 +109,15 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
   // An unpaid GCash/Maya booking isn't offered to anyone yet, so it must not
   // pulse or say "Finding a runner" — the payment is what it's waiting on.
   const awaitingPayment = isAwaitingPayment(booking);
-  const headline = statusHeadline(booking.status, {
-    errandSlug: booking.errand_type?.slug,
-    runnerFirstName: runnerName,
-    awaitingPayment,
-  });
+  // Specific about the method ("Waiting for your GCash payment") — the same
+  // words the tracking screen leads with.
+  const headline = awaitingPayment
+    ? awaitingPaymentHeadline(booking)
+    : statusHeadline(booking.status, {
+        errandSlug: booking.errand_type?.slug,
+        runnerFirstName: runnerName,
+        awaitingPayment,
+      });
   // no_runner shares the 'searching' phase but is NOT an active search —
   // exclude it so the dot stops pulsing and the caption doesn't claim
   // we're still "finding" one while the headline says none are available.
@@ -116,14 +138,22 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
         ? 'Completed'
         : 'Delivered'
       : STAGE_WORD[phase];
+  // Waiting for payment: when it has to be paid by, not an instruction to
+  // tap — the button (when there is one) is the instruction.
   const stageCaption =
     isCancelled || isNoRunner
       ? null
       : awaitingPayment
-      ? 'Tap to complete payment'
+      ? paymentDeadlineLine(booking, (ms) => formatTime(new Date(ms)))
       : isSearching
-      ? 'Finding a runner nearby'
+      ? // Not "Finding a runner nearby" under "Looking for a runner
+        // nearby…" (rule 2) — the useful fact is how long it takes. Same
+        // words as the tracking hero.
+        'Usually takes under a minute'
       : `${stageWord} · step ${filled} of 4`;
+  // Nothing has started while the payment is outstanding, so an empty
+  // four-step bar would only be noise.
+  const showProgress = !awaitingPayment;
 
   // Pulsing status dot — only animates while searching so the card
   // doesn't waste cycles once a runner is matched. Frozen to a static
@@ -164,18 +194,23 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
   });
 
   return (
+    // One surface (rule 8). The tappable body and the primary button are
+    // siblings, not nested: a button inside an accessible Pressable can't be
+    // reached by VoiceOver/TalkBack at all.
+    <View style={styles.card}>
     <Pressable
       onPress={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
         onPress();
       }}
       accessibilityRole="button"
-      accessibilityLabel={`Active errand: ${headline}. Tap to track.`}
+      accessibilityLabel={`Active errand: ${headline}. Tap to ${
+        booking.runner ? 'track' : 'view details'
+      }.`}
       android_ripple={{ color: 'rgba(37,99,235,0.08)' }}
-      style={({ pressed }) => [
-        styles.card,
-        pressed && { opacity: 0.97, transform: [{ scale: 0.997 }] },
-      ]}
+      style={({ pressed }) =>
+        pressed ? { opacity: 0.97, transform: [{ scale: 0.997 }] } : null
+      }
     >
       {/* Header — errand CATEGORY + fare. Not the status: the live status
           is the headline below, so a "EN ROUTE" pill over "Ana is en
@@ -191,6 +226,9 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
               // no_runner is terminal — a blue dot would falsely read as
               // "live". Neutral grey matches how the app colours it elsewhere.
               isNoRunner && { backgroundColor: LightColors.textMuted },
+              // Waiting on the customer, not on us — the same caution amber
+              // Recent and Activity give "Waiting for payment".
+              awaitingPayment && { backgroundColor: LightColors.warning },
               { transform: [{ scale: dotScale }], opacity: dotOpacity },
             ]}
           />
@@ -212,27 +250,31 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
           stepper with labels lives on the dedicated tracking screen; on
           the home card the headline already names the current stage, so
           repeating it as four labelled checkmarks only crowded the card. */}
-      <View
-        style={styles.progressTrack}
-        accessibilityRole="progressbar"
-        accessibilityValue={{ min: 0, max: 4, now: filled }}
-      >
-        {[0, 1, 2, 3].map((i) => (
-          <View
-            key={i}
-            style={[
-              styles.progressSegment,
-              i < filled
-                ? styles.progressSegmentFilled
-                : styles.progressSegmentEmpty,
-              i < 3 && { marginRight: 5 },
-            ]}
-          />
-        ))}
-      </View>
+      {showProgress ? (
+        <View
+          style={styles.progressTrack}
+          accessibilityRole="progressbar"
+          accessibilityValue={{ min: 0, max: 4, now: filled }}
+        >
+          {[0, 1, 2, 3].map((i) => (
+            <View
+              key={i}
+              style={[
+                styles.progressSegment,
+                i < filled
+                  ? styles.progressSegmentFilled
+                  : styles.progressSegmentEmpty,
+                i < 3 && { marginRight: 5 },
+              ]}
+            />
+          ))}
+        </View>
+      ) : null}
 
       {stageCaption ? (
-        <Text style={styles.stageCaption}>{stageCaption}</Text>
+        <Text style={[styles.stageCaption, !showProgress && styles.stageCaptionLead]}>
+          {stageCaption}
+        </Text>
       ) : null}
 
       {/* Footer — who's on it + the way in. Flattened onto the card
@@ -293,38 +335,55 @@ export function ActiveBookingCard({ booking, onPress }: ActiveBookingCardProps) 
             </View>
           </>
         ) : (
-          <>
-            <View style={styles.searchIconWrap}>
-              <Search size={16} color={PRIMARY} />
-            </View>
-            <View style={styles.footerMeta}>
+          // The route, in the same pickup-dot / drop-off-square language as
+          // Recent and Activity. (A magnifier chip used to sit here, which
+          // read as "searching" even on an errand waiting for its payment.)
+          <View style={styles.routeMeta}>
+            {booking.pickup_address ? (
               <View style={styles.addrRow}>
-                <MapPin size={11} color={TEXT_SECONDARY} />
+                <View style={styles.pickupBead} />
                 <Text style={styles.addrText} numberOfLines={1}>
                   {booking.pickup_address}
                 </Text>
               </View>
-              <View style={[styles.addrRow, { marginTop: 2 }]}>
-                <MapPin size={11} color={TEXT_SECONDARY} />
+            ) : null}
+            {booking.dropoff_address ? (
+              <View style={[styles.addrRow, booking.pickup_address ? { marginTop: 6 } : null]}>
+                <View style={styles.dropoffBead} />
                 <Text style={styles.addrText} numberOfLines={1}>
                   {booking.dropoff_address}
                 </Text>
               </View>
-            </View>
-          </>
+            ) : null}
+          </View>
         )}
-        <View style={styles.trackPill}>
-          <Text style={styles.trackPillText}>
-            {booking.runner ? 'Track' : 'View'}
-          </Text>
-          <ArrowRight
-            size={13}
-            color={LightColors.textInverse}
-            style={{ marginLeft: 3 }}
-          />
-        </View>
+        {primaryAction ? null : (
+          <View style={styles.trackPill}>
+            <Text style={styles.trackPillText}>
+              {booking.runner ? 'Track' : 'View'}
+            </Text>
+            <ArrowRight
+              size={13}
+              color={LightColors.textInverse}
+              style={{ marginLeft: 3 }}
+            />
+          </View>
+        )}
       </View>
     </Pressable>
+    {primaryAction ? (
+      <View style={styles.actionRow}>
+        <Button
+          title={primaryAction.label}
+          loading={primaryAction.loading}
+          loadingTitle={primaryAction.loadingLabel}
+          onPress={primaryAction.onPress}
+          accessibilityHint={primaryAction.accessibilityHint}
+          fullWidth
+        />
+      </View>
+    ) : null}
+    </View>
   );
 }
 
@@ -403,6 +462,15 @@ const styles = StyleSheet.create({
     color: TEXT_SECONDARY,
     marginTop: 7,
   },
+  // With no progress bar above it the caption is the line under the
+  // headline, so it reads at body size in the readable secondary tone.
+  stageCaptionLead: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: 'Quicksand_500Medium',
+    color: LightColors.textSecondary,
+    marginTop: -8,
+  },
   footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -445,26 +513,35 @@ const styles = StyleSheet.create({
     fontFamily: 'Quicksand_600SemiBold',
     color: TEXT_SECONDARY,
   },
-  searchIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    // Neutral chip (blue glyph on top) — matches the app-wide move to
-    // quiet, neutral icon chrome so blue/gold read as intentional.
-    backgroundColor: LightColors.surfaceMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
+  routeMeta: {
+    flex: 1,
+    marginRight: 8,
   },
   addrRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
+  pickupBead: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: LightColors.success,
+  },
+  dropoffBead: {
+    width: 7,
+    height: 7,
+    borderRadius: 2,
+    backgroundColor: LightColors.textPrimary,
+  },
   addrText: {
-    fontSize: 11,
+    fontSize: 12,
     fontFamily: 'Quicksand_500Medium',
-    color: TEXT_PRIMARY,
-    marginLeft: 4,
+    color: LightColors.textSecondary,
+    marginLeft: 8,
     flex: 1,
+  },
+  actionRow: {
+    marginTop: 14,
   },
   trackPill: {
     flexDirection: 'row',

@@ -34,6 +34,7 @@ import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl'
 import { BottomSheet } from '../../../components/ui/BottomSheet';
 import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { Eyebrow } from '../../../components/ui/Typography';
+import { Skeleton } from '../../../components/ui/Skeleton';
 import { RatingStars } from '../../../components/ui/RatingStars';
 import { VerificationBanner } from '../../../components/runner/VerificationBanner';
 import { DeleteAccountSheet } from '../../../components/settings/DeleteAccountSheet';
@@ -155,16 +156,20 @@ function StatBar({
         accessibilityRole="button"
         accessibilityLabel={`${label}, ${value}.${coaching ? ` ${coaching}` : ''} Tap to learn what this means.`}
         android_ripple={{ color: `${LightColors.primary}14` }}
-        style={({ pressed }) => (pressed ? { opacity: 0.6 } : undefined)}
+        className="active:opacity-60"
+        style={{ minHeight: 44, justifyContent: 'center' }}
       >
         <View className="flex-row items-center justify-between mb-2">
-          <View className="flex-row items-center" style={{ gap: 5 }}>
-            <Text className="text-[13px] font-montserrat-semi text-textSecondary">
+          <View className="flex-row items-center" style={{ gap: 6 }}>
+            <Text className="text-[14px] font-montserrat-semi text-textSecondary">
               {label}
             </Text>
-            <Info size={13} color={LightColors.textTertiary} strokeWidth={2} />
+            <Info size={16} color={LightColors.textSecondary} strokeWidth={2} />
           </View>
-          <Text className="text-[15px] font-inter-semi" style={{ color: valueColor }}>
+          <Text
+            className="text-[16px] font-inter-semi tabular-nums"
+            style={{ color: valueColor, fontVariant: ['tabular-nums'] }}
+          >
             {value}
           </Text>
         </View>
@@ -370,7 +375,7 @@ export default function RunnerProfileScreen() {
         : undefined;
 
   const accountMenu: MenuItem[] = [
-    { label: 'Edit Profile', icon: UserRound, route: '/(runner)/settings/edit-profile' },
+    { label: 'Edit profile', icon: UserRound, route: '/(runner)/settings/edit-profile' },
     // Only while the email is unverified — the row disappears once it is.
     ...(security.needsEmailVerification
       ? [
@@ -384,22 +389,22 @@ export default function RunnerProfileScreen() {
         ]
       : []),
     {
-      label: 'Documents & Verification',
+      label: 'Documents & verification',
       icon: FileCheck2,
       route: '/(runner)/settings/documents',
       preview: documentsPreview,
       previewColor: documentsPreviewColor,
     },
     {
-      label: 'Vehicle Information',
+      label: 'Vehicle',
       icon: Car,
       route: '/(runner)/settings/vehicle',
       preview: vehiclePreview,
     },
-    { label: 'Payout Settings', icon: Wallet, route: '/(runner)/payout' },
-    { label: 'Preferred Errand Types', icon: ListChecks, route: '/(runner)/settings/preferred-types' },
+    { label: 'Payout settings', icon: Wallet, route: '/(runner)/payout' },
+    { label: 'Errand types', icon: ListChecks, route: '/(runner)/settings/preferred-types' },
     // The people the cockpit's SOS card and no-signal sheet offer one tap away.
-    { label: 'Trusted Contacts', icon: Users, route: '/(runner)/settings/trusted-contacts' },
+    { label: 'Trusted contacts', icon: Users, route: '/(runner)/settings/trusted-contacts' },
   ];
 
   const securityMenu: MenuItem[] = [
@@ -416,9 +421,9 @@ export default function RunnerProfileScreen() {
     // header comment in settings/notifications.tsx). The screen now shows the
     // real device permission state and routes to the OS settings.
     { label: 'Notifications', icon: Bell, route: '/(runner)/settings/notifications' },
-    { label: 'Appearance & Accessibility', icon: Accessibility, route: '/(runner)/settings/appearance' },
-    { label: 'Help & Support', icon: LifeBuoy, route: '/(runner)/settings/help' },
-    { label: 'Terms & Privacy', icon: FileText, route: '/(runner)/settings/terms' },
+    { label: 'Appearance & accessibility', icon: Accessibility, route: '/(runner)/settings/appearance' },
+    { label: 'Help & support', icon: LifeBuoy, route: '/(runner)/settings/help' },
+    { label: 'Terms & privacy', icon: FileText, route: '/(runner)/settings/terms' },
     {
       label: 'Check for updates',
       icon: RefreshCw,
@@ -461,38 +466,40 @@ export default function RunnerProfileScreen() {
         item.preview ? `${item.label}, ${item.preview}` : item.label
       }
       android_ripple={{ color: `${LightColors.primary}14` }}
-      style={({ pressed }) => (pressed ? { opacity: 0.6 } : undefined)}
-      className={`flex-row items-center py-3.5 ${
+      // Static layout in className; a function `style` on a Pressable loses
+      // its layout under NativeWind.
+      className={`flex-row items-center py-3 active:opacity-60 ${
         idx < arr.length - 1 ? 'border-b border-divider' : ''
       }`}
+      style={{ minHeight: 56 }}
     >
       {item.icon ? (
-        <View className="w-10 h-10 rounded-full bg-surfaceMuted items-center justify-center mr-3">
-          <item.icon size={18} color={LightColors.primary} strokeWidth={1.9} />
+        <View className="w-9 h-9 rounded-full bg-primary50 items-center justify-center mr-3">
+          <item.icon size={20} color={LightColors.primary} strokeWidth={1.9} />
         </View>
       ) : null}
       <Text
-        className="flex-1 text-[14px] font-montserrat-semi text-textPrimary"
+        className="flex-1 text-[15px] font-montserrat-semi text-textPrimary"
         style={item.color ? { color: item.color } : undefined}
       >
         {item.label}
       </Text>
       {item.preview ? (
         <Text
-          className={`text-[12px] mr-1.5 ${
+          className={`text-[13px] mr-1.5 ${
             item.previewColor ? 'font-montserrat-bold' : 'font-montserrat'
           }`}
           numberOfLines={1}
           style={{
-            maxWidth: 120,
-            color: item.previewColor ?? LightColors.textTertiary,
+            maxWidth: 140,
+            color: item.previewColor ?? LightColors.textSecondary,
           }}
         >
           {item.preview}
         </Text>
       ) : null}
       {item.trailing ?? (
-        <ChevronRight size={16} color={LightColors.textTertiary} strokeWidth={2} />
+        <ChevronRight size={16} color={LightColors.textSecondary} strokeWidth={2} />
       )}
     </Pressable>
   );
@@ -522,20 +529,21 @@ export default function RunnerProfileScreen() {
               {user?.full_name ?? 'Runner'}
             </Text>
             <View className="flex-row items-center mt-1">
-              <Star size={11} color={LightColors.accentStrong} fill={LightColors.accentStrong} />
-              <Text className="text-[12px] font-inter tabular-nums text-textSecondary ml-1">
+              <Star size={16} color={LightColors.accentStrong} fill={LightColors.accentStrong} />
+              <Text className="text-[13px] font-inter tabular-nums text-textSecondary ml-1">
                 {rating.label}
               </Text>
               {runnerProfile ? (
-                <Text className="text-[12px] font-montserrat text-textTertiary ml-1.5">
-                  · {runnerProfile.total_errands ?? 0} errands
+                <Text className="text-[13px] font-montserrat tabular-nums text-textSecondary ml-1.5">
+                  · {runnerProfile.total_errands ?? 0}{' '}
+                  {(runnerProfile.total_errands ?? 0) === 1 ? 'errand' : 'errands'}
                 </Text>
               ) : null}
             </View>
             {isVerified && (
               <View className="flex-row items-center mt-1.5">
-                <BadgeCheck size={12} color={LightColors.primary} strokeWidth={2} />
-                <Text className="text-[12px] font-montserrat-bold text-primary ml-1">Verified runner</Text>
+                <BadgeCheck size={16} color={LightColors.primary} strokeWidth={2} />
+                <Text className="text-[13px] font-montserrat-bold text-primary ml-1">Verified runner</Text>
               </View>
             )}
           </View>
@@ -555,7 +563,21 @@ export default function RunnerProfileScreen() {
         {/* Performance — hairline-bound row, no card chrome */}
         <View className="px-5 mb-6">
           <Eyebrow className="mb-3">Performance</Eyebrow>
-          {loadFailed && !runnerProfile ? (
+          {!runnerProfile && !loadFailed ? (
+            // Pattern 2 — the bars' shape while the first load runs, never a
+            // 0% completion that reads as a bad runner.
+            <View className="py-4 border-y border-divider" style={{ gap: 22 }}>
+              {[0, 1].map((i) => (
+                <View key={i}>
+                  <View className="flex-row justify-between mb-2.5">
+                    <Skeleton width={96} height={14} />
+                    <Skeleton width={40} height={14} />
+                  </View>
+                  <Skeleton height={6} borderRadius={3} />
+                </View>
+              ))}
+            </View>
+          ) : loadFailed && !runnerProfile ? (
             // The store is empty AND the refresh failed — fake 0%/0★
             // rings would read as a terrible runner, not a failed load.
             <View className="py-4 border-y border-divider">
@@ -594,21 +616,22 @@ export default function RunnerProfileScreen() {
                       isUnrated ? 'New, no ratings yet' : avgRating.toFixed(1)
                     }.${ratingWarn ? ` ${METRIC_EXPLAINERS.rating.coaching}` : ''} Tap to learn what this means.`}
                     android_ripple={{ color: `${LightColors.primary}14` }}
-                    style={({ pressed }) => (pressed ? { opacity: 0.6 } : undefined)}
-                    className="flex-row items-center justify-between"
+                    className="flex-row items-center justify-between active:opacity-60"
+                    style={{ minHeight: 44 }}
                   >
-                    <View className="flex-row items-center" style={{ gap: 5 }}>
-                      <Text className="text-[13px] font-montserrat-semi text-textSecondary">
+                    <View className="flex-row items-center" style={{ gap: 6 }}>
+                      <Text className="text-[14px] font-montserrat-semi text-textSecondary">
                         Rating
                       </Text>
-                      <Info size={13} color={LightColors.textTertiary} strokeWidth={2} />
+                      <Info size={16} color={LightColors.textSecondary} strokeWidth={2} />
                     </View>
                     <View className="flex-row items-center" style={{ gap: 8 }}>
                       <Text
-                        className="text-[15px] font-inter-semi"
+                        className="text-[16px] font-inter-semi tabular-nums"
                         style={{
+                          fontVariant: ['tabular-nums'],
                           color: isUnrated
-                            ? LightColors.textTertiary
+                            ? LightColors.textSecondary
                             : ratingIsGood
                               ? LightColors.successDark
                               : LightColors.warningDark,
@@ -632,8 +655,8 @@ export default function RunnerProfileScreen() {
                 </View>
               </View>
               <View className="flex-row items-center justify-between pt-3">
-                <Text className="text-[12px] font-montserrat text-textTertiary">Member since</Text>
-                <Text className="text-[12px] font-montserrat-bold text-textPrimary">
+                <Text className="text-[13px] font-montserrat text-textSecondary">Member since</Text>
+                <Text className="text-[13px] font-montserrat-bold text-textPrimary">
                   {(runnerProfile?.created_at && formatMonthYear(runnerProfile.created_at)) ||
                     'New member'}
                 </Text>
@@ -688,7 +711,8 @@ export default function RunnerProfileScreen() {
 
         {/* Delete Account — simple link */}
         <Pressable
-          className="items-center py-4 mb-4"
+          className="items-center justify-center py-3 mb-4 self-center px-4"
+          style={{ minHeight: 44 }}
           accessibilityRole="button"
           accessibilityLabel="Delete account"
           onPress={() => {
@@ -698,7 +722,7 @@ export default function RunnerProfileScreen() {
             setShowDeleteModal(true);
           }}
         >
-          <Text className="text-[12px] font-montserrat text-textTertiary underline">
+          <Text className="text-[13px] font-montserrat text-textSecondary underline">
             Delete account
           </Text>
         </Pressable>

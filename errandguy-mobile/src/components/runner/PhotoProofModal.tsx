@@ -5,10 +5,12 @@ import { MotiView } from 'moti';
 import { Camera, X } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Button } from '../ui/Button';
+import { PermissionPrompt } from '../ui/PermissionSheet';
 import { useImagePicker, type ImagePickerSource } from '../../hooks/useImagePicker';
 import { LightColors } from '../../constants/colors';
 import { Radius } from '../../constants/radius';
 import { toast } from '../../stores/toastStore';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 
 interface PhotoProofModalProps {
   type: 'pickup' | 'delivery';
@@ -36,22 +38,33 @@ export function PhotoProofModal({
    *  say "Retry upload" instead of implying this is a new photo. */
   const isRetry = !!initialUri && photoUri === initialUri;
 
+  const reduceMotion = useReducedMotion();
+  // Camera refused at the OS level. Shown IN the sheet, not only as a toast:
+  // the runner is standing at a door with a proof-gated step, and a toast that
+  // fades in five seconds leaves a dead capture button behind it.
+  const [cameraDenied, setCameraDenied] = useState(false);
+
   // Surface a denied camera/photo permission with a Settings deep-link so
   // the runner isn't stuck at a dead capture button in a proof-required flow.
   const handlePermissionDenied = useCallback((source: ImagePickerSource) => {
-    toast.error(
-      source === 'camera'
-        ? 'Camera access is off — enable it in Settings'
-        : 'Photo access is off — enable it in Settings',
-      { actionLabel: 'Settings', onAction: () => Linking.openSettings().catch(() => {}) },
-    );
+    if (source === 'camera') {
+      setCameraDenied(true);
+      return;
+    }
+    toast.error('Photo access is off — enable it in Settings', {
+      actionLabel: 'Settings',
+      onAction: () => Linking.openSettings().catch(() => {}),
+    });
   }, []);
   const { pickImage, takePhoto } = useImagePicker({ onPermissionDenied: handlePermissionDenied });
 
   const handleCapture = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const result = await takePhoto();
-    if (result) setPhotoUri(result.uri);
+    if (result) {
+      setCameraDenied(false);
+      setPhotoUri(result.uri);
+    }
   };
 
   const handleGallery = async () => {
@@ -95,9 +108,13 @@ export function PhotoProofModal({
       >
         <Pressable onPress={(e) => e.stopPropagation()}>
           <MotiView
-            from={{ translateY: 400, opacity: 0 }}
+            from={reduceMotion ? { opacity: 1 } : { translateY: 400, opacity: 0 }}
             animate={{ translateY: 0, opacity: 1 }}
-            transition={{ type: 'spring', damping: 22, stiffness: 220, mass: 0.8 }}
+            transition={
+              reduceMotion
+                ? { type: 'timing', duration: 0 }
+                : { type: 'spring', damping: 22, stiffness: 220, mass: 0.8 }
+            }
             style={s.sheet}
           >
             {/* Handle */}
@@ -107,8 +124,8 @@ export function PhotoProofModal({
 
             {/* Header */}
             <View style={s.header}>
-              <Text style={s.title}>
-                {type === 'pickup' ? 'Pickup Photo' : 'Delivery Photo'}
+              <Text style={s.title} accessibilityRole="header">
+                {type === 'pickup' ? 'Pickup photo' : 'Delivery photo'}
               </Text>
               <Pressable
                 onPress={onClose}
@@ -118,7 +135,7 @@ export function PhotoProofModal({
                 hitSlop={8}
                 style={s.closeBtn}
               >
-                <X size={18} color={LightColors.textTertiary} />
+                <X size={20} color={LightColors.textSecondary} />
               </Pressable>
             </View>
 
@@ -126,28 +143,46 @@ export function PhotoProofModal({
               {isRetry
                 ? 'This photo didn’t finish uploading. Send it again — no need to re-shoot.'
                 : type === 'pickup'
-                  ? 'Take a photo of the item you picked up.'
-                  : 'Take a photo as proof of delivery.'}
+                  ? 'Take a photo of the item you picked up. The customer sees it as proof of pickup.'
+                  : 'Take a photo at the drop-off. It’s the customer’s proof of delivery.'}
             </Text>
 
             {!photoUri ? (
               <View style={{ gap: 12 }}>
-                <Pressable
-                  onPress={handleCapture}
-                  accessibilityRole="button"
-                  accessibilityLabel="Take photo"
-                  style={s.captureArea}
-                >
-                  <Camera size={40} color={LightColors.primary} />
-                  <Text style={s.captureLabel}>Take Photo</Text>
-                </Pressable>
+                {cameraDenied ? (
+                  // Pattern 7: why the camera is needed, Allow in Settings, and
+                  // the alternative. Delivery proof is camera-only by design,
+                  // so its alternative is another try once access is back.
+                  <PermissionPrompt
+                    kind="camera"
+                    reason={
+                      type === 'delivery'
+                        ? 'The delivery photo is the customer’s proof, so it has to be taken live at the door.'
+                        : 'The pickup photo shows the customer what you collected.'
+                    }
+                    alternativeLabel={
+                      type === 'delivery' ? 'Try the camera again' : 'Choose from gallery instead'
+                    }
+                    onAlternative={type === 'delivery' ? handleCapture : handleGallery}
+                  />
+                ) : (
+                  <Pressable
+                    onPress={handleCapture}
+                    accessibilityRole="button"
+                    accessibilityLabel="Take photo"
+                    style={s.captureArea}
+                  >
+                    <Camera size={40} color={LightColors.primary} strokeWidth={1.8} />
+                    <Text style={s.captureLabel}>Take photo</Text>
+                  </Pressable>
+                )}
                 {/* Delivery proof is camera-only: a hand-off photo must be
                     captured live at the drop-off, so the gallery picker (which
                     would let a stale/screenshot image stand in) is hidden.
                     Pickup proof keeps the gallery option. */}
-                {type !== 'delivery' && (
+                {type !== 'delivery' && !cameraDenied && (
                   <Button
-                    title="Choose from Gallery"
+                    title="Choose from gallery"
                     variant="outline"
                     onPress={handleGallery}
                     fullWidth
@@ -227,9 +262,9 @@ const s = StyleSheet.create({
     color: LightColors.textPrimary,
   },
   closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: LightColors.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
@@ -255,9 +290,9 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   captureLabel: {
-    fontSize: 14,
-    fontFamily: 'Quicksand_400Regular',
-    color: LightColors.textSecondary,
+    fontSize: 15,
+    fontFamily: 'Quicksand_700Bold',
+    color: LightColors.primary,
     marginTop: 8,
   },
 });

@@ -477,7 +477,7 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
     return (
       <View className="flex-1 bg-background">
         <GradientHeader
-          title="Trusted Contacts"
+          title="Trusted contacts"
           showBack
           fallbackHref={fallbackHref}
         />
@@ -489,7 +489,7 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
   return (
     <View className="flex-1 bg-background">
       <GradientHeader
-        title="Trusted Contacts"
+        title="Trusted contacts"
         showBack
         fallbackHref={fallbackHref}
         trailing={
@@ -552,7 +552,7 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
       {/* Add button */}
       <BottomActionBar>
         <Button
-          title="Add Contact"
+          title="Add contact"
           onPress={openAddModal}
           disabled={contacts.length >= MAX_CONTACTS}
           fullWidth
@@ -586,7 +586,7 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
             >
               <View className="flex-row items-center justify-between mb-6">
                 <Text className="text-lg font-montserrat-bold text-textPrimary">
-                  {editingId ? 'Edit Contact' : 'Add Contact'}
+                  {editingId ? 'Edit contact' : 'Add contact'}
                 </Text>
                 <Pressable
                   onPress={() => setModalVisible(false)}
@@ -681,7 +681,7 @@ export function TrustedContactsScreen({ fallbackHref }: TrustedContactsScreenPro
                 </View>
 
                 <Button
-                  title={editingId ? 'Save Changes' : 'Add Contact'}
+                  title={editingId ? 'Save changes' : 'Add contact'}
                   onPress={handleSave}
                   loading={saving}
                   loadingTitle="Saving…"

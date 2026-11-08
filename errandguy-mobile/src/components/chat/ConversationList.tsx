@@ -144,7 +144,7 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
           onPress={() => openConversation(item)}
           padding="sm"
           className="mx-5 mb-2.5"
-          accessibilityLabel={`Open chat with ${item.counterparty?.full_name ?? 'participant'}`}
+          accessibilityLabel={`Open chat with ${item.counterparty?.full_name ?? 'your runner'}`}
           accessibilityHint={
             unread ? `${item.unread_count} unread messages` : undefined
           }
@@ -153,7 +153,7 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
             <View>
               <Avatar
                 uri={item.counterparty?.avatar_url}
-                name={item.counterparty?.full_name ?? '?'}
+                name={item.counterparty?.full_name ?? 'Runner'}
                 size="md"
               />
               {unread && (
@@ -194,7 +194,8 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
                   }`}
                   numberOfLines={1}
                 >
-                  {item.counterparty?.full_name ?? 'Errand partner'}
+                  {/* No name until a runner accepts the errand (the server withholds it). */}
+                  {item.counterparty?.full_name ?? 'Waiting for a runner'}
                 </Text>
                 <Text
                   // shrink-0 keeps the timestamp always fully visible.

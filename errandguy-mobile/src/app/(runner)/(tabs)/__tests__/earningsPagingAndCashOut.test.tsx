@@ -164,11 +164,11 @@ describe('earnings — cash out stays reachable', () => {
     const list = screen.UNSAFE_getByType(SectionList);
     const header = render(<View>{list.props.ListHeaderComponent}</View>);
     expect(header.getByText('Available now')).toBeTruthy();
-    expect(header.getByText('Request Payout')).toBeTruthy();
+    expect(header.getByText('Request payout')).toBeTruthy();
     expect(header.getByText('Export CSV')).toBeTruthy();
 
     const footer = render(<View>{list.props.ListFooterComponent}</View>);
-    expect(footer.queryByText('Request Payout')).toBeNull();
+    expect(footer.queryByText('Request payout')).toBeNull();
     expect(footer.queryByText('Export CSV')).toBeNull();
   });
 });

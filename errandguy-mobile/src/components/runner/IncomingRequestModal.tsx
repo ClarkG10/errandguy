@@ -13,6 +13,7 @@ import * as Haptics from 'expo-haptics';
 import { MotiView } from 'moti';
 import type { LucideIcon } from 'lucide-react-native';
 import { MapPin, Navigation, Truck, ShoppingBag } from 'lucide-react-native';
+import { Radius } from '../../constants/radius';
 import { Button } from '../ui/Button';
 import { PickupDistanceLine } from './PickupDistanceLine';
 import { PaymentChip, ScheduledChip, StopsChip, VehicleChip } from './OfferChips';
@@ -66,7 +67,7 @@ function TypeChip({
       className="flex-row items-center gap-1 rounded-full px-2.5 py-1"
       style={{ backgroundColor: bg }}
     >
-      <Icon size={13} color={fg} strokeWidth={2} />
+      <Icon size={16} color={fg} strokeWidth={2} />
       <Text className="text-[12px] font-montserrat-bold" style={{ color: fg }}>
         {label}
       </Text>
@@ -291,8 +292,16 @@ export function IncomingRequestModal({
               ? { type: 'timing', duration: 120 }
               : { type: 'spring', damping: 22, stiffness: 240, mass: 0.8 }
           }
-          className="bg-background w-full max-w-sm overflow-hidden"
-          style={{ borderRadius: 24, maxHeight: '88%' }}
+          // Layout and fill live in `style`: NativeWind drops className on a
+          // Reanimated/Moti view, which left the offer floating with no card.
+          style={{
+            backgroundColor: LightColors.surface,
+            width: '100%',
+            maxWidth: 384,
+            overflow: 'hidden',
+            borderRadius: Radius.modal,
+            maxHeight: '88%',
+          }}
         >
           {/* Body scrolls under large Dynamic Type so the pinned actions
               below always stay reachable on a short (SE) screen. */}
@@ -345,30 +354,27 @@ export function IncomingRequestModal({
                   />
                 </Svg>
                 <Text
-                  className="font-inter-semi tabular-nums"
-                  style={{ fontSize: 34, lineHeight: 38, color: urgencyColor }}
+                  className="font-inter-semi"
+                  style={{ fontSize: 34, lineHeight: 38, color: urgencyColor, fontVariant: ['tabular-nums'] }}
                 >
                   {remaining}
                 </Text>
               </Animated.View>
-              <Text className="text-xs font-montserrat text-textSecondary mt-2">
+              <Text className="text-[13px] font-montserrat text-textSecondary mt-2">
                 seconds to respond
               </Text>
             </View>
 
-            {/* Errand Type + category chips (lucide, not emoji). */}
+            {/* Errand type. No "Shopping" chip on a Buy-for-me offer — it
+                only repeated the heading (and in red, a caution colour); the
+                budget banner below carries what's different about it. */}
             <View className="flex-row items-center flex-wrap gap-2 mb-3">
-              <Text className="text-base font-montserrat-bold text-textPrimary">
-                {booking.errand_type?.name ?? 'New Errand'}
+              <Text
+                className="text-[18px] font-montserrat-bold text-textPrimary"
+                accessibilityRole="header"
+              >
+                {booking.errand_type?.name ?? 'New errand'}
               </Text>
-              {isShopping && (
-                <TypeChip
-                  Icon={ShoppingBag}
-                  label="Shopping"
-                  bg={LightColors.dangerSoft}
-                  fg={LightColors.dangerDark}
-                />
-              )}
               {isSingleLocation && (
                 <TypeChip
                   Icon={MapPin}
@@ -397,16 +403,16 @@ export function IncomingRequestModal({
 
             {/* Addresses — hide dropoff for on-site / single-location errands. */}
             <View className="mb-3">
-              <View className="flex-row items-start gap-2 mb-1">
-                <MapPin size={14} color={LightColors.success} />
-                <Text className="text-xs font-montserrat text-textSecondary flex-1" numberOfLines={2}>
+              <View className="flex-row items-start gap-2 mb-1.5">
+                <MapPin size={16} color={LightColors.successDark} />
+                <Text className="text-[13px] leading-[18px] font-montserrat text-textSecondary flex-1" numberOfLines={2}>
                   {booking.pickup_address}
                 </Text>
               </View>
               {showDropoff && (
                 <View className="flex-row items-start gap-2">
-                  <Navigation size={14} color={LightColors.danger} />
-                  <Text className="text-xs font-montserrat text-textSecondary flex-1" numberOfLines={2}>
+                  <Navigation size={16} color={LightColors.dangerDark} />
+                  <Text className="text-[13px] leading-[18px] font-montserrat text-textSecondary flex-1" numberOfLines={2}>
                     {booking.dropoff_address}
                   </Text>
                 </View>
@@ -419,7 +425,7 @@ export function IncomingRequestModal({
                 Clamped so the pinned actions stay reachable. */}
             {booking.description ? (
               <Text
-                className="text-xs font-montserrat text-textPrimary mb-2"
+                className="text-[13px] leading-[18px] font-montserrat text-textPrimary mb-2"
                 numberOfLines={3}
               >
                 {booking.description}
@@ -427,11 +433,14 @@ export function IncomingRequestModal({
             ) : null}
             {booking.special_instructions ? (
               <View className="bg-surfaceMuted rounded-xl px-2.5 py-2 mb-3">
-                <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary mb-0.5">
+                <Text
+                  className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-0.5"
+                  style={{ letterSpacing: 0.6 }}
+                >
                   Special instructions
                 </Text>
                 <Text
-                  className="text-xs font-montserrat text-textPrimary"
+                  className="text-[13px] leading-[18px] font-montserrat text-textPrimary"
                   numberOfLines={3}
                 >
                   {booking.special_instructions}
@@ -443,11 +452,14 @@ export function IncomingRequestModal({
                 cash, so they need the ceiling before accepting. */}
             {isShopping && booking.shopping_budget != null && (
               <View className="flex-row items-center gap-2 bg-warningSoft border border-warning/40 rounded-xl p-2.5 mb-3">
-                <ShoppingBag size={14} color={LightColors.warning} />
+                <ShoppingBag size={16} color={LightColors.warningDark} />
                 <Text className="text-xs font-montserrat text-warningDark flex-1">
                   You pay for the items, repaid in cash · up to
                 </Text>
-                <Text className="text-sm font-inter-semi tabular-nums text-warningDark">
+                <Text
+                  className="text-sm font-inter-semi text-warningDark"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   {formatCurrency(booking.shopping_budget)}
                 </Text>
               </View>
@@ -456,25 +468,15 @@ export function IncomingRequestModal({
             {/* Distance + Payout — the most important number on the modal,
                 given the slate fintech treatment so it visually wins. */}
             <View
-              className="flex-row items-center justify-between rounded-xl p-3 overflow-hidden"
+              className="flex-row items-center justify-between rounded-xl px-4 py-3"
               style={{ backgroundColor: LightColors.textPrimary }}
             >
-              <View
-                pointerEvents="none"
-                style={{
-                  position: 'absolute',
-                  top: -30,
-                  right: -20,
-                  width: 90,
-                  height: 90,
-                  borderRadius: 45,
-                  backgroundColor: LightColors.primary,
-                  opacity: 0.22,
-                }}
-              />
               <View className="flex-row items-center gap-1.5">
-                <Truck size={14} color={LightColors.textInverse} />
-                <Text className="text-xs font-inter tabular-nums text-white/80">
+                <Truck size={16} color={LightColors.textInverse} />
+                <Text
+                  className="text-[13px] font-inter text-white"
+                  style={{ fontVariant: ['tabular-nums'] }}
+                >
                   {formatDistanceKm(booking.distance_km) ?? 'On-site'}
                 </Text>
               </View>
@@ -485,10 +487,16 @@ export function IncomingRequestModal({
                 accessible
                 accessibilityLabel={`You earn ${formatRunnerPayout(booking.runner_payout)}`}
               >
-                <Text className="text-[10px] font-montserrat-bold uppercase text-white/70">
+                <Text
+                  className="text-[11px] font-montserrat-bold uppercase text-white"
+                  style={{ letterSpacing: 0.6 }}
+                >
                   You earn
                 </Text>
-                <Text className="text-xl font-inter-semi tabular-nums text-white">
+                <Text
+                  className="font-inter-semi text-white"
+                  style={{ fontSize: 26, lineHeight: 30, fontVariant: ['tabular-nums'] }}
+                >
                   {formatRunnerPayout(booking.runner_payout)}
                 </Text>
               </View>

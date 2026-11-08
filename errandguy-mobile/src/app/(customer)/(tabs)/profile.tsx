@@ -222,7 +222,7 @@ export default function CustomerProfileScreen() {
 
   const accountMenu: MenuItem[] = [
     {
-      label: 'Edit Profile',
+      label: 'Edit profile',
       icon: UserRound,
       onPress: () => setShowEditModal(true),
     },
@@ -241,9 +241,9 @@ export default function CustomerProfileScreen() {
           },
         ]
       : []),
-    { label: 'Saved Addresses', icon: MapPin, route: '/(customer)/addresses' },
+    { label: 'Saved addresses', icon: MapPin, route: '/(customer)/addresses' },
     {
-      label: 'Trusted Contacts',
+      label: 'Trusted contacts',
       icon: Users,
       route: '/(customer)/trusted-contacts',
     },
@@ -343,12 +343,12 @@ export default function CustomerProfileScreen() {
       },
     },
     {
-      label: 'Appearance & Accessibility',
+      label: 'Appearance & accessibility',
       icon: Accessibility,
       route: '/(customer)/appearance',
     },
-    { label: 'Help & Support', icon: HelpCircle, route: '/(customer)/help' },
-    // Distinct destination from Help & Support: the in-app ticket inbox,
+    { label: 'Help & support', icon: HelpCircle, route: '/(customer)/help' },
+    // Distinct destination from Help & support: the in-app ticket inbox,
     // named exactly as its screen is titled.
     { label: 'Support tickets', icon: Flag, route: '/(customer)/support' },
     {

@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { PackageSearch } from 'lucide-react-native';
+import { ChevronRight, PackageSearch } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBookingStore } from '../../../stores/bookingStore';
 import { configService } from '../../../services/config.service';
@@ -15,10 +15,11 @@ import { EmptyState } from '../../../components/ui/EmptyState';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { ErrandTypeIcon } from '../../../components/ui/ErrandTypeIcon';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
-import { Illustration } from '../../../components/ui/Illustration';
 import { formatCurrency } from '../../../utils/formatCurrency';
 import { errandTypeMinimumPrice } from '../../../utils/errandTypePrice';
 import { LightColors, Elevation } from '../../../constants/colors';
+import { Radius } from '../../../constants/radius';
+import { PressableScale } from '../../../components/customer/booking/PressableScale';
 import { useResponsive } from '../../../constants/responsive';
 import { getErrandTypeRule } from '../../../constants/errandTypeRules';
 import type { ErrandType } from '../../../types';
@@ -226,23 +227,14 @@ export default function TypeSelectionScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      <GradientHeader title="What do you need?" showBack onBackPress={handleBackPress}>
-        <View className="px-5 -mt-2 pb-3 flex-row items-center justify-between">
-          <Text
-            className="text-[10px] font-montserrat-bold uppercase"
-            style={{ letterSpacing: 1.4, color: LightColors.textSecondary }}
-          >
-            New errand · Step 1
-          </Text>
-          {/* Small 3D parcel hero beside the heading — decorative only. */}
-          <Illustration name="3d-parcel" size={88} />
-        </View>
-      </GradientHeader>
+      {/* Title only: the step indicator below already says where the user
+          is, so no "Step 1" eyebrow, and no decorative 3D object. */}
+      <GradientHeader title="What do you need?" showBack onBackPress={handleBackPress} />
 
       {/* Step indicator — makes the 3-step funnel visible from step 1
           (previously this screen had no indicator at all). Clamped to
           the same content column as the grid so tablet edges align. */}
-      <View className="px-5 mt-3 mb-3">
+      <View className="px-5 mt-1 mb-4">
         <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
           <BookingStepIndicator currentStep={0} />
         </View>
@@ -267,20 +259,22 @@ export default function TypeSelectionScreen() {
         }
       >
         {showSkeletons ? (
-          // Skeleton mirrors the real card's metrics (radius 20, 62px
-          // icon, ~2-line description) and the four-type catalogue's 2×2
-          // grid, so the swap to data doesn't reflow.
-          <View className="flex-row flex-wrap justify-between">
+          // Skeleton mirrors the real card's metrics (radius 16, 62px
+          // icon, name, a two-line description, the price row) and the
+          // four-type catalogue's 2×2 grid, so the swap to data doesn't
+          // reflow.
+          <View className="flex-row flex-wrap justify-between" accessibilityLabel="Loading errand types">
             {Array.from({ length: 4 }).map((_, i) => (
               <View
                 key={`skeleton-${i}`}
-                className="w-[48%] mb-3 p-4 bg-surface"
-                style={{ height: 180, borderRadius: 20, opacity: 0.6 }}
+                className="w-[48%] mb-3 p-4 bg-surface border border-divider"
+                style={{ height: 196, borderRadius: Radius.card }}
               >
-                <View className="rounded-2xl bg-divider mb-2" style={{ width: 62, height: 62 }} />
-                <View className="h-3 w-3/4 rounded-full bg-divider mb-2" />
-                <View className="h-2 w-full rounded-full bg-divider mb-1.5" />
-                <View className="h-2 w-1/2 rounded-full bg-divider" />
+                <View className="rounded-2xl bg-divider mb-3" style={{ width: 62, height: 62 }} />
+                <View className="h-3.5 w-3/4 rounded-full bg-divider mb-2.5" />
+                <View className="h-2.5 w-full rounded-full bg-divider mb-1.5" />
+                <View className="h-2.5 w-2/3 rounded-full bg-divider" />
+                <View className="h-2.5 w-1/2 rounded-full bg-divider mt-auto" />
               </View>
             ))}
           </View>
@@ -291,7 +285,7 @@ export default function TypeSelectionScreen() {
             const fromPrice = errandTypeMinimumPrice(type);
 
             return (
-              <Pressable
+              <PressableScale
                 key={type.id}
                 accessibilityRole="button"
                 accessibilityLabel={[
@@ -303,23 +297,25 @@ export default function TypeSelectionScreen() {
                   .join('. ')}
                 accessibilityHint="Goes to errand details"
                 accessibilityState={{ selected: isSelected }}
-                // Selection pattern: the chosen tile lifts to a soft
-                // blue-tinted surface with a 2px brand border — content
-                // stays DARK on a LIGHT ground. (The old pattern filled the
-                // tile solid blue and inverted the text/icon to white; but
-                // the PNG illustration doesn't recolor to white, and inverted
-                // text repeatedly regressed to invisible white-on-white. A
-                // tint+border keeps every element legible with no inversion.)
-                className="w-[48%] mb-3 p-4"
-                style={({ pressed }) => [
+                // The touch target is the grid cell; the card inside fills
+                // it, so both cards in a row share the taller one's height
+                // (descriptions now wrap instead of truncating).
+                style={{ width: '48%', marginBottom: 12 }}
+                // Selection pattern: the type already in the draft sits on a
+                // soft blue-tinted surface with a brand border — content
+                // stays DARK on a LIGHT ground (the PNG illustration can't
+                // recolour to white, and inverted text kept regressing to
+                // invisible white-on-white).
+                contentStyle={[
                   {
-                    borderRadius: 16,
+                    flex: 1,
+                    padding: 16,
+                    borderRadius: Radius.card,
                     backgroundColor: isSelected ? LightColors.primaryLight : LightColors.surface,
                     borderWidth: 1.5,
-                    borderColor: isSelected ? LightColors.primary : 'transparent',
+                    borderColor: isSelected ? LightColors.primary : LightColors.divider,
                   },
                   isSelected ? Elevation.md : Elevation.sm,
-                  pressed ? { opacity: 0.92, transform: [{ scale: 0.985 }] } : null,
                 ]}
                 android_ripple={{ color: `${LightColors.primary}14`, borderless: false }}
                 onPress={() => {
@@ -328,7 +324,7 @@ export default function TypeSelectionScreen() {
                   chooseType(type.id);
                 }}
               >
-                <View className="mb-2">
+                <View className="mb-3">
                   {/* Always 'tinted' — never 'ghost'. ErrandTypeIcon returns a
                       PNG that can't recolor to white, so a ghost variant on a
                       blue tile rendered a washed-out icon. */}
@@ -342,33 +338,38 @@ export default function TypeSelectionScreen() {
                     is signalled by the tint + border, never by inverting
                     the text color (which kept regressing to invisible). */}
                 <Text
-                  className="text-[14px] font-montserrat-bold mb-1"
+                  className="text-[15px] font-montserrat-bold mb-1"
                   style={{ color: isSelected ? LightColors.primaryDark : LightColors.textPrimary }}
-                  numberOfLines={2}
                 >
                   {type.name}
                 </Text>
-                {/* minHeight reserves the 2-line block so one-line
-                    descriptions don't produce ragged card heights. */}
+                {/* Wraps in full — the description is what tells the types
+                    apart, so it is never cut off with "…". */}
                 <Text
-                  className="text-[12px] font-montserrat mb-3 leading-[16px]"
-                  style={{ minHeight: 32, color: LightColors.textSecondary }}
-                  numberOfLines={2}
+                  className="text-[13px] font-montserrat leading-[18px]"
+                  style={{ color: LightColors.textSecondary }}
                 >
                   {type.description}
                 </Text>
-                {/* The true least it can cost — service fee included (the
-                    base fee alone undersold every type by 15%). */}
-                {fromPrice != null && (
-                  <Text
-                    className="text-[12px] font-inter tabular-nums"
-                    style={{ color: LightColors.textSecondary }}
-                    numberOfLines={1}
-                  >
-                    From {formatCurrency(fromPrice)}
-                  </Text>
-                )}
-              </Pressable>
+                {/* Price + chevron pinned to the card's foot: the "this
+                    goes somewhere" affordance. The true least it can cost —
+                    service fee included (the base fee alone undersold every
+                    type by 15%). */}
+                <View className="flex-row items-center justify-between mt-auto pt-3">
+                  {fromPrice != null ? (
+                    <Text
+                      className="text-[13px] font-inter-medium flex-shrink"
+                      style={{ color: LightColors.textPrimary, fontVariant: ['tabular-nums'] }}
+                      numberOfLines={1}
+                    >
+                      From {formatCurrency(fromPrice)}
+                    </Text>
+                  ) : (
+                    <View />
+                  )}
+                  <ChevronRight size={18} color={LightColors.primary} strokeWidth={2.25} />
+                </View>
+              </PressableScale>
             );
           })}
         </View>

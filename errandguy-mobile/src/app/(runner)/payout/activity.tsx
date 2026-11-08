@@ -6,6 +6,7 @@ import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { BrandRefreshControl } from '../../../components/ui/BrandRefreshControl';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { RunnerEmptyState } from '../../../components/ui/RunnerEmptyState';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { Skeleton } from '../../../components/ui/Skeleton';
 import { SyncIndicator } from '../../../components/ui/SyncIndicator';
 import { Spinner } from '../../../components/ui/Spinner';
@@ -166,10 +167,13 @@ export default function WalletActivityScreen() {
           // header/empty/footer blocks instead of the list container.
           <View className="px-5 pt-1 pb-3">
             <Card padding="lg" tone={balance < 0 ? 'tinted' : 'default'}>
-              <Text className="text-[10px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.2 }}>
+              <Text className="text-[11px] font-montserrat-bold uppercase text-textSecondary" style={{ letterSpacing: 1.2 }}>
                 {balance < 0 ? 'Owed from cash errands' : 'Current balance'}
               </Text>
-              <Text className="text-[26px] font-inter-semi tabular-nums text-textPrimary mt-1">
+              <Text
+                className="text-[28px] font-inter-semi tabular-nums text-textPrimary mt-1"
+                style={{ fontVariant: ['tabular-nums'] }}
+              >
                 {balance < 0 ? '−' : ''}
                 {formatCurrency(Math.abs(balance))}
               </Text>
@@ -203,7 +207,7 @@ export default function WalletActivityScreen() {
         ListEmptyComponent={
           <View className="px-5">
             {initialLoading ? (
-            <Card className="p-0 overflow-hidden">
+            <Card padding="none" className="overflow-hidden">
               {[1, 2, 3, 4, 5].map((i) => (
                 <View
                   key={i}
@@ -218,6 +222,13 @@ export default function WalletActivityScreen() {
                 </View>
               ))}
             </Card>
+            ) : null}
+            {initialLoading ? (
+              <SlowNetworkNotice
+                loading={initialLoading}
+                onRetry={() => page1Q.refresh()}
+                style={{ marginTop: 12 }}
+              />
           ) : page1Failed ? (
             <ErrorState
               error={page1Q.error}
@@ -226,7 +237,6 @@ export default function WalletActivityScreen() {
             />
           ) : (
             <RunnerEmptyState
-              eyebrow="Wallet"
               title="No wallet activity yet"
               description="Earnings, tips, platform fees and payouts will all show up here."
             />
@@ -245,17 +255,19 @@ export default function WalletActivityScreen() {
               </Text>
               <Pressable
                 onPress={fetchNextPage}
-                hitSlop={12}
+                hitSlop={{ top: 4, bottom: 4, left: 12, right: 12 }}
                 accessibilityRole="button"
                 accessibilityLabel="Retry loading more wallet activity"
+                className="justify-center px-4"
+                style={{ minHeight: 44 }}
               >
-                <Text className="text-[12px] font-montserrat-bold text-primary">Try again</Text>
+                <Text className="text-[13px] font-montserrat-bold text-primary">Try again</Text>
               </Pressable>
             </View>
           ) : !hasMore && rows.length > 0 ? (
             <Text
-              className="text-[11px] font-montserrat text-center py-5"
-              style={{ color: LightColors.textTertiary }}
+              className="text-[12px] font-montserrat text-center py-5"
+              style={{ color: LightColors.textSecondary }}
             >
               That’s your full wallet history.
             </Text>

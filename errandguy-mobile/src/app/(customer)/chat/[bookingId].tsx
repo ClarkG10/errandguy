@@ -30,6 +30,7 @@ import { useKeyboard } from '../../../hooks/useKeyboard';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Spinner } from '../../../components/ui/Spinner';
 import { ErrorState } from '../../../components/ui/ErrorState';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { ChatThreadSkeleton } from '../../../components/ui/Skeleton';
 import { ImagePickerModal } from '../../../components/ui/ImagePickerModal';
 import { ImageLightbox } from '../../../components/ui/ImageLightbox';
@@ -814,6 +815,12 @@ export default function ChatScreen() {
           {showNewMsgChip ? <NewMessageChip onPress={handleJumpToNewest} /> : null}
         </View>
 
+        {/* Pattern 5: a first load past ~4s says it's the connection. */}
+        <SlowNetworkNotice
+          loading={initialLoading && messages.length === 0 && !loadError}
+          onRetry={handleReload}
+          style={{ marginHorizontal: 16, marginVertical: 8, alignSelf: 'auto' }}
+        />
         {/* First-load failure — retry sits just above the composer so the
             conversation isn't a silent blank when the fetch fails. */}
         {loadError && messages.length === 0 ? (
@@ -958,7 +965,7 @@ export default function ChatScreen() {
         visible={imagePickerVisible}
         onClose={() => setImagePickerVisible(false)}
         onConfirm={handleImageSend}
-        title="Send Photo"
+        title="Send a photo"
         subtitle="Share a photo in the chat"
       />
 

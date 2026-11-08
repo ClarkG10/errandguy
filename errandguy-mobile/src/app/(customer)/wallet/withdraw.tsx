@@ -17,6 +17,7 @@ import { ConfirmModal } from '../../../components/ui/ConfirmModal';
 import { GradientHeader } from '../../../components/ui/GradientHeader';
 import { Input } from '../../../components/ui/Input';
 import { Skeleton } from '../../../components/ui/Skeleton';
+import { SlowNetworkNotice } from '../../../components/ui/SlowNetworkNotice';
 import { ErrorState } from '../../../components/ui/ErrorState';
 import { PayoutDestinationForm } from '../../../components/payout/PayoutDestinationForm';
 import { useWalletSummary } from '../../../hooks/useWalletSummary';
@@ -215,7 +216,14 @@ export default function WithdrawScreen() {
                 />
               </View>
             ) : withdrawable == null ? (
-              <Skeleton width={140} height={28} borderRadius={6} style={{ marginTop: 6 }} />
+              <>
+                <Skeleton width={140} height={28} borderRadius={6} style={{ marginTop: 6 }} />
+                <SlowNetworkNotice
+                  loading
+                  onRetry={() => void summaryQ.refresh()}
+                  style={{ marginTop: 12 }}
+                />
+              </>
             ) : (
               <Text className="text-[26px] font-inter-semi tabular-nums text-textPrimary mt-1">
                 {formatCurrency(withdrawable)}
