@@ -873,3 +873,158 @@ One finding was refuted on checking: "a bounced deletion payout raises two alert
 - **The booking screen** after a vehicle's per-km rate is set to 0 in admin.
 
 **Release order for these commits:** deploy the server first, and check that `GET /api/v1/runner/earnings/daily` answers. Then publish the app. Against the old server, the earnings tab would fall back to summing one 30-row page, so the order matters this time.
+
+## 10. Third pass (2026-11-07/08)
+
+The same brief was sent again. On the 7th, the six earlier commits were pushed on your OK ("push if all good to go") after a green re-run; pushing doesn't deploy.
+
+This pass looked at what the first two hadn't:
+- races and double taps on the server;
+- background jobs, the scheduler and time zones;
+- notifications from end to end;
+- the app across restarts, sign-outs, account switches and slow networks;
+- a fresh review of the code pushed on the 7th.
+
+It also **looked at the product for the first time**. The staff panel was rendered in a real browser at phone, tablet and desktop widths, and the app was run as an Expo web build. Both ran against a throwaway local copy of the server with sample data, so nothing touched production. That is how several of the findings below were seen rather than guessed.
+
+Then, at your request, a design pass applied your ten app-state patterns and twenty polish rules (§10.5).
+
+### 10.1 Found by looking (staff panel and app in a browser)
+
+**V1 · High · Staff panel: runner and person tabs crashed**
+- **Before:** the status badges in seven tabs took their value as `fn (string $s)`. Filament fills closure parameters by name, so every tab with a row crashed with a server error. That included a runner's **Documents** tab, where staff approve ID and selfie for new runners, plus Errands, a person's Bookings and their Wallet. It had been live since August. No test rendered those tabs with rows.
+- **Change:** renamed to `$state`. A guard test fails if any panel closure takes a value under a name Filament can't fill, and the tabs are now tested with rows.
+- **Status:** Fixed (6c0e0f7).
+
+**V2 · High · App: code cells stacked in a column**
+- **Before:** on the sign-in code and reset-password screens, the six code cells ran down the screen (your screenshot). NativeWind ignores `className` on Reanimated's `Animated.View`, so the row layout was lost. The same thing removed the bottom sheet's position and background.
+- **Change:** layout moved into `style`. A test fails if an `Animated.*` element takes `className` again.
+- **Status:** Fixed (5770127).
+
+**V3 · Medium · Staff panel display**
+- **Before:**
+  - a pending runner's page offered only "Reject runner", with no sign of Approve;
+  - the sign-in card had two headings, and the code step still said "Welcome back, sign in";
+  - "S O S Alerts" appeared in menus and titles;
+  - a payment's title was its raw id;
+  - the SOS banner covered a fifth of a phone screen on every page, including the alert's own page.
+- **Change:**
+  - Approve shows greyed with the reason, and unlocks as documents are approved, without a reload;
+  - one heading per sign-in step;
+  - proper titles;
+  - the SOS banner can be shrunk to a pill and isn't shown on its own alert's page.
+- **Status:** Fixed (6c0e0f7).
+
+### 10.2 Money, safety and privacy
+
+| # | Priority | Where | Before → after | Status |
+|---|---|---|---|---|
+| R1 | High | SOS text cap (my pass-2 code) | A text round the SMS provider *refused* still counted toward the 3-a-day cap. During an outage, the next real SOS skipped the trusted contacts and told the person they'd been texted. A refused round no longer counts. | Fixed |
+| N1 | High | Buy-for-me push | On a cash errand, "have ₱450 cash ready" left out the ₱115 fare the runner also collects. It now says "₱565 (₱450 items + ₱115 fare)". | Fixed |
+| N3 | Medium | Chat | A runner merely *offered* an errand could read its whole chat (on a rescued errand, everything said to the previous runner), see the customer in their inbox, and message them. A runner now joins the chat when they accept. | Fixed |
+| C1 | Medium | Payout webhook | A reversal that lost a race to "succeeded" was swallowed: the money came back to us and the runner stayed debited. It is now reversed and returned. A late "succeeded" for a payout Xendit now reports as reversed is no longer called "paid twice". | Fixed |
+| C10 | Medium | Staff refund | A cancel whose fee was the whole fare refunds nothing and leaves the payment "completed". Staff "Refund" would then pay the fare out a second time. It is now refused (service and button). | Fixed |
+| R3 | Medium | Account erasure (my pass-2 code) | Old client-supplied chat links could make erasure delete *other people's* files (an avatar, another errand's proof photo). Erasure now deletes only photos in that chat's own folder, and one bad file no longer stops the rest or the audit entry. | Fixed |
+| R4 | Medium | Account erasure (my pass-2 code) | Erasure renamed a *different* runner's "Accepted by runner Juan Dela Cruz" notes, and scanned (and on MySQL locked) the whole status log. It is now scoped to the user's own rows, by index. | Fixed |
+| C2 | Medium | Refund into an erased account | A late charge refunded into an erased wallet raised no alert. It now raises the staff alert, which says what staff can actually do. | Fixed |
+| C6 | Low | Payouts | "Mark completed" by hand could land just after a colleague's "Send via Xendit", paying twice. It is now refused under the lock. | Fixed |
+| R6 | Low | Audit log | Helper text invited typing a person's phone or email into the permanent audit log, and admins without money access saw the balance in the erase dialog. Both fixed. | Fixed |
+| R7 | Low | Booking | Leaving the vehicle out skipped the withdrawn-vehicle check. Fixed. | Fixed |
+
+### 10.3 Notifications, jobs and races
+
+| # | Priority | Where | Before → after | Status |
+|---|---|---|---|---|
+| J1 | High | Push delivery | Expo receipts were never read. Broken FCM/APNs credentials (every push on a platform failing, runners' offers included) and uninstalled apps were invisible. Receipts are now read every 15 minutes: dead devices are removed, broken credentials raise a critical alert. **Deploy runs one migration.** | Fixed |
+| J2 | High | Scheduler | A scheduled task failing every run (a money backstop) reached no one, and `/health` stayed green. It now raises a staff alert, once an hour. | Fixed |
+| J3 | Medium | Alerts | A realtime-server outage raised one red alert per failed broadcast and buried SOS. Alerts are now grouped and throttled. | Fixed |
+| J5 | Medium | Matching | A search that stopped after an offer lapsed or was declined (its queued job lost) sat until the 30-minute auto-cancel, and cash errands were never covered. The 15-minute sweep now resumes any errand with no search running, and a failed search names its errand. | Fixed |
+| N6/J4 | Medium | No runner | "No runner available" was followed ~28 minutes later by a second "Errand cancelled" push, often after the customer had rebooked. Now one notice. | Fixed |
+| N4 | Medium | Completion | "Payment will be processed" was true for none of the three outcomes. Both sides are now told what actually moved. | Fixed |
+| N5 | Medium | Badge | The unread badge only went up. Quiet progress rows land read, a tapped push marks its row read, and there is no "Runner found" for an offer that may be declined. | Fixed |
+| N7 | Medium | Payout bounce | Raw Xendit codes (INSUFFICIENT_BALANCE is ours, not the runner's) are now plain words with the right next step. | Fixed |
+| C3 | Medium | Shopping list | Quick ticks dropped each other, a tick could write the old list over the customer's edit, and long lists broke the live update. All now locked and capped. | Fixed |
+| C4, C7, C8, C9, J6, J7, N11, N12, R9, R10 | Low | Various | The stale-offer sweep no longer takes back a fresh offer. The active-errand cache is cleared after commit. A crashed request's idempotency claim frees up in minutes. Duplicate inserts get 409, not 500. Support tickets are one per double tap. Date filters use Manila days. Onboarding nudges keep their gap. Verification notices say what was decided. Old offer notes don't name runners. Queued events survive a deploy. | Fixed |
+
+### 10.4 The app across restarts, sign-outs and slow networks
+
+| # | Priority | Before → after | Status |
+|---|---|---|---|
+| L1 | High | The request layer (deduplicating identical requests, ETag revalidation, retry) **never ran**: axios 1.x routes `api.get` around the patched method. It is now wired. The time-based cache stays off until each screen is checked on a phone, and a timeout no longer shows "offline". | Fixed |
+| L2 | High | A closed GCash checkout settled on "not paid" after one 4-second check, and could say "you weren't charged" when the customer was charged. The app now keeps checking with the server and never claims an unconfirmed outcome. | Fixed |
+| L3 | High | The offline queue could replay with nobody signed in. A late 401 from an old session ended the new one. Both fixed. | Fixed |
+| L4–L7, L10–L12, P1–P5, P8–P9 | Medium/Low | Covered: wallet and chat state after an account switch; "remember me" off now signing out on the server; "You've been signed out" after a 401; a killed-app push tap routed before the role was known; the splash stuck on storage errors; a cancel timing out; GPS after a relaunch; the earnings cash-out strip being pushed down; notification Undo; route requests with no timeout; private images on another host name; paging edges. | Fixed |
+| L8, L9 | Medium | Item photos lost if the OS kills the app during GCash, and a resumed draft able to create a second errand. Both need on-device work. | Open |
+
+### 10.5 Design pass: the ten app states and twenty polish rules
+
+You asked for a more modern app and sent ten reference state screens and a list of twenty rules. The taste skill you linked builds marketing websites, not phone apps, so its principles were applied rather than the skill itself. The app's existing colours, fonts, corner radii and icon set were kept, and the logic, money maths, API calls and routing were not touched. Commit 07cfcba covers this section.
+
+**The ten states, now handled on every screen they apply to:**
+
+| State | What people see now |
+|---|---|
+| Empty | An icon in a soft circle, why it's empty, and one next step. |
+| Loading | Placeholders shaped like the content. After about 4 seconds, "Still loading · slow connection". |
+| Error | A red card with the cause and a retry or way out. "You weren't charged" appears only when the server confirmed it. |
+| No internet | An amber banner; what was already loaded stays on screen; a "Reconnecting…" pill. |
+| Slow network | The same notice, plus a lighter path where one really works ("Type the address instead", "Updates without the map"). |
+| No results | The query repeated back, "Did you mean …?", and suggestion chips. |
+| Permission denied | A sheet saying why the permission is needed, "Allow in Settings", and an alternative. |
+| Signed out | "You were signed out … your errand draft is saved", with "Sign in and continue". |
+| Form errors | The exact field is marked with how to fix it; correct fields get a tick; disabled buttons say why. |
+| Success | "Errand booked", the key facts, pickup → drop-off, and "Track errand". |
+
+**The most visible changes:**
+- **Vehicle picker:** a list with vehicle icons, ETAs and prices, with honest "Cheapest" and "Fastest" tags.
+- **Unpaid errand:** "Waiting for your GCash payment", with a **Pay ₱95.00** button. SOS appears only once a runner is on the errand.
+- **Finished errand:** one clear "Delivered", with a clean timeline.
+- **General clean-up:**
+  - completed steps are blue, not brand gold;
+  - no more filler badges, repeated labels or 3D decorations in headers;
+  - sentence case throughout;
+  - money in tabular figures;
+  - stronger text contrast.
+
+**Bugs found by looking at the app in a browser:**
+- The quick-book button showed as an empty circle.
+- The runner's offer card, the completion sheet and the photo picker had no background. A guard test now covers this case.
+- Several chips and cards lost their fill colour.
+- Opacity classes Tailwind 3.3 doesn't generate (/15, /85) silently did nothing. A guard test now catches these.
+
+### 10.6 Quality assurance (third pass)
+
+| Check | Result |
+|---|---|
+| Server tests on SQLite | 1,526 passed |
+| Server tests on MySQL 9.7 (throwaway database, dropped afterwards) | 1,526 passed, 1 skipped (the SQLite-only backup test, expected) |
+| App type check | Clean |
+| App tests | 1,775 passed |
+| Staff panel in a browser, at phone, tablet and desktop widths | 22 pages, no errors after the fixes |
+| App in an Expo web build against a throwaway local server | Every redesigned screen checked from screenshots |
+
+Production was never touched during these checks. The throwaway server used SQLite with mail, queue and gateway switched off. The web build also had production hosts blocked in the browser.
+
+**Couldn't be tested here; needs a real phone:**
+- **Permissions:** denied → Settings → back again, for location, camera, photos and notifications.
+- **Payments:** a real GCash or Maya payment and return, and a payment tapped from Home.
+- **Pushes:** tapped while the app is closed (as runner and as customer, including behind Face ID); receipts reporting broken credentials after keys are rotated.
+- **Runner:** GPS after relaunching mid-errand; whether the "Map is slow" chip appears only when the map really is slow (it always shows on web, where there is no map).
+- **Native rendering:** tabular figures, animations under Reduce Motion, and sheet backgrounds on iOS and Android; the "Notifications" tab label at the largest Android font size.
+
+**Still open:**
+- Item photos lost if the OS kills the app during GCash, and a resumed draft able to create a second errand (L8, L9).
+- A runner going offline at the exact moment an offer is made (C5).
+- One rare webhook order that sends two payment notices (N8).
+- The time-based request cache stays off until each screen's cache time is checked on a phone.
+
+**Needs your decision:**
+- Whether to split the reset-password screen into two steps, and how long the code lasts (now 5 minutes).
+- The items still open from §5 and §9.
+
+### 10.7 Release order
+1. In Forge, deploy the server first. It runs **one migration** (`push_tickets`).
+2. Run `php artisan errandguy:preflight` once.
+3. Publish the app with `eas update`.
+
+The app works against the old server, but push-tap read marks need the new one.
