@@ -85,6 +85,13 @@ class BookingInfolist
                                         TextEntry::make('pricing_mode')->badge()->color('gray'),
                                         TextEntry::make('schedule_type')->badge()->color('gray'),
                                         TextEntry::make('base_fee')->money('PHP'),
+                                        // Never stored, so the rows didn't add up to
+                                        // the total (a motorcycle errand was ₱25 short).
+                                        TextEntry::make('vehicle_premium')
+                                            ->label('Vehicle fee')
+                                            ->state(fn (Booking $record): ?float => $record->vehiclePremium())
+                                            ->money('PHP')
+                                            ->placeholder('—'),
                                         TextEntry::make('distance_fee')->money('PHP'),
                                         TextEntry::make('service_fee')->money('PHP'),
                                         TextEntry::make('surcharge')->money('PHP'),

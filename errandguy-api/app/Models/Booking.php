@@ -160,6 +160,29 @@ class Booking extends Model
         return array_values(array_unique([...$this->offeredRunnerIds(), $runnerId]));
     }
 
+    /**
+     * The vehicle's flat premium (motorcycle 25, car 60, ...), which
+     * PricingService adds to every total but the booking never stored: it is
+     * what the total holds beyond the stored rows. Null when that can't be
+     * told (an old 'negotiate' booking's total is the customer's own price, or
+     * a hand-edited row leaves a negative remainder).
+     */
+    public function vehiclePremium(): ?float
+    {
+        if ($this->pricing_mode === 'negotiate') {
+            return null;
+        }
+
+        $rest = round(
+            (float) $this->total_amount + (float) $this->promo_discount
+                - (float) $this->base_fee - (float) $this->distance_fee
+                - (float) $this->service_fee - (float) $this->surcharge,
+            2,
+        );
+
+        return $rest >= 0 ? $rest : null;
+    }
+
     public function customer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'customer_id');

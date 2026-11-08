@@ -59,3 +59,49 @@ describe('fareLines — the discount row on older promo-code bookings', () => {
     expect(lines).toHaveLength(4);
   });
 });
+
+/**
+ * The vehicle premium (motorcycle ₱25, car ₱60) is in every total but was in
+ * no row, so a motorcycle errand read 50 + 6.45 + 12.22 = 68.67 under ₱93.67.
+ */
+describe('fareLines — the vehicle row', () => {
+  const sum = (lines: { amount: number }[]) =>
+    Math.round(lines.reduce((t, l) => t + l.amount, 0) * 100) / 100;
+
+  it('shows the premium an estimate sends, so the rows add up', () => {
+    const estimate = {
+      base_fee: 50, vehicle_premium: 25, distance_fee: 6.45, service_fee: 12.22, surcharge: 0,
+      total_amount: 93.67,
+    };
+    const lines = fareLines(estimate);
+    expect(labels(lines)).toEqual(['Base Fee', 'Vehicle Fee', 'Distance Fee', 'Convenience Fee', 'Surcharge']);
+    expect(sum(lines)).toBe(93.67);
+  });
+
+  it('recovers it on a booking, which never stored it', () => {
+    const booking = {
+      base_fee: '50.00', distance_fee: '6.45', service_fee: '12.22', surcharge: '0.00',
+      total_amount: '93.67',
+    };
+    const lines = fareLines(booking, '0.00');
+    expect(lines[1]).toEqual({ label: 'Vehicle Fee', amount: 25 });
+    expect(sum(lines)).toBe(93.67);
+  });
+
+  it('still adds up on an older promo booking (the total had the saving taken off)', () => {
+    const booking = {
+      base_fee: '50.00', distance_fee: '30.00', service_fee: '15.75', surcharge: '0.00',
+      total_amount: '130.75', // 50 + 60 car + 30 + 15.75 − 25 discount
+    };
+    const lines = fareLines(booking, '25.00');
+    expect(lines[1]).toEqual({ label: 'Vehicle Fee', amount: 60 });
+    expect(sum(lines)).toBe(130.75);
+  });
+
+  it('shows no vehicle row it cannot explain', () => {
+    const base = { base_fee: '50.00', distance_fee: '30.00', service_fee: '15.75', surcharge: '0.00' };
+    expect(labels(fareLines({ ...base, total_amount: '80.00' }))).not.toContain('Vehicle Fee'); // negative
+    expect(labels(fareLines({ ...base, total_amount: '300.00', pricing_mode: 'negotiate' }))).not.toContain('Vehicle Fee');
+    expect(labels(fareLines(base))).not.toContain('Vehicle Fee'); // no total to read it from
+  });
+});
