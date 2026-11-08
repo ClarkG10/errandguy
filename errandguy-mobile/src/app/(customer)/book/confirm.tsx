@@ -679,8 +679,12 @@ export default function ConfirmScreen() {
         ? `${UNPAID_CANCEL_TITLE}. ${unpaidCancelMessage(endedBooking)}`
         : STATE_ANNOUNCEMENTS[state];
 
+  // Keyed, so the payment overlay keeps its place when the screen switches
+  // between the success layout and the map layout (an unpaid booking's
+  // payment landing): unkeyed, it sat at a different child index in each and
+  // was remounted while visible — a flash, or a dismiss and re-present on iOS.
   const overlays = (
-    <>
+    <React.Fragment key="overlays">
       <ConfirmModal
         visible={showCancelModal}
         title="Cancel this errand?"
@@ -717,7 +721,7 @@ export default function ConfirmScreen() {
 
       {/* Verifies a reopened GCash/Maya checkout (the "Pay" button). */}
       <PaymentProgress {...progress} />
-    </>
+    </React.Fragment>
   );
 
   if (showBookedSuccess) {

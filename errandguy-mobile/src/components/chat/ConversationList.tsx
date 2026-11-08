@@ -42,6 +42,11 @@ function timeAgo(iso: string | null): string {
 }
 
 export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
+  // No counterparty: for a customer, a runner hasn't accepted yet (the server
+  // withholds them until then); for a runner, the customer's account was
+  // erased. This list is shared, so the words depend on whose inbox it is.
+  const isRunnerInbox = chatHrefPrefix === '/(runner)/chat';
+  const unnamed = isRunnerInbox ? 'Customer' : 'Waiting for a runner';
   const router = useRouter();
   const userId = useAuthStore((s) => s.user?.id ?? 'anon');
   // Role-aware copy: a runner's counterparty is the customer, and vice
@@ -144,7 +149,7 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
           onPress={() => openConversation(item)}
           padding="sm"
           className="mx-5 mb-2.5"
-          accessibilityLabel={`Open chat with ${item.counterparty?.full_name ?? 'your runner'}`}
+          accessibilityLabel={`Open chat with ${item.counterparty?.full_name ?? (isRunnerInbox ? 'the customer' : 'your runner')}`}
           accessibilityHint={
             unread ? `${item.unread_count} unread messages` : undefined
           }
@@ -153,7 +158,7 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
             <View>
               <Avatar
                 uri={item.counterparty?.avatar_url}
-                name={item.counterparty?.full_name ?? 'Runner'}
+                name={item.counterparty?.full_name ?? (isRunnerInbox ? 'Customer' : 'Runner')}
                 size="md"
               />
               {unread && (
@@ -194,8 +199,7 @@ export function ConversationList({ chatHrefPrefix, fallbackHref }: Props) {
                   }`}
                   numberOfLines={1}
                 >
-                  {/* No name until a runner accepts the errand (the server withholds it). */}
-                  {item.counterparty?.full_name ?? 'Waiting for a runner'}
+                  {item.counterparty?.full_name ?? unnamed}
                 </Text>
                 <Text
                   // shrink-0 keeps the timestamp always fully visible.

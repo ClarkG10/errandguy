@@ -214,3 +214,18 @@ describe('shopping item money is cash at the door', () => {
     expect(RECEIPT_MODAL).not.toMatch(/charge/i);
   });
 });
+
+describe("Home's Pay card keeps its payment result on screen", () => {
+  it('refreshes Home only once the result is closed, not on the verdict', () => {
+    // Home re-renders the card from the list it refetches: refreshing on the
+    // verdict unmounted the overlay a second after "Payment confirmed" or
+    // "you weren't charged — Book again" appeared.
+    const card = readFileSync(
+      join(__dirname, '..', '..', 'components', 'customer', 'home', 'AwaitingPaymentCard.tsx'),
+      'utf8',
+    );
+    expect(card).toMatch(/settleOnVerdict: false/);
+    const hook = readFileSync(join(__dirname, '..', '..', 'hooks', 'useCompleteBookingPayment.ts'), 'utf8');
+    expect(hook).toMatch(/if \(verdict && settleOnVerdictRef\.current\) onSettledRef\.current\?\.\(\)/);
+  });
+});

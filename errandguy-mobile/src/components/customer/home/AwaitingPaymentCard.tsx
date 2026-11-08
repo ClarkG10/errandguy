@@ -50,7 +50,11 @@ export function AwaitingPaymentCard({ booking, onOpen, onSettled }: AwaitingPaym
 
   const { checkoutUrl, completePayment, opening, progress } = useCompleteBookingPayment(
     booking,
-    { onSettled, onRebook: rebook },
+    // Refresh Home only once the result is closed: Home re-renders this card
+    // from the list it refetches, which unmounted the result overlay a
+    // second after it appeared ("Payment confirmed" flashed; "you weren't
+    // charged — Book again" vanished with the errand).
+    { onSettled, onRebook: rebook, settleOnVerdict: false },
   );
 
   return (

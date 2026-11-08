@@ -2240,19 +2240,23 @@ export default function TrackingScreen() {
   ) : null;
 
   // Trip route — the timeline stays surfaced by default, not behind a toggle.
-  // A cancelled or never-matched errand reached none of these steps (its
-  // status isn't in the flow), so eight hollow rows would say nothing; the
-  // money card tells that story instead.
-  const tripRouteSection = isMoneyOutcome ? null : (
+  // A cancelled or never-matched errand shows only the steps it actually
+  // reached (from its status log, with their times) — an errand cancelled
+  // after pickup still says how far it got; one that reached none shows no
+  // timeline, and the money card tells the story.
+  const reachedSteps = isMoneyOutcome
+    ? timelineSteps.filter((step) => step.timestamp).map((step) => ({ ...step, status: 'completed' as const }))
+    : timelineSteps;
+  const tripRouteSection = isMoneyOutcome && reachedSteps.length === 0 ? null : (
     <View className="mt-5 mb-2">
       <Text
         className="text-[11px] font-montserrat-bold uppercase text-textSecondary mb-3"
         style={{ letterSpacing: 1.4 }}
         maxFontSizeMultiplier={1.3}
       >
-        {booking.status === 'completed' ? 'Timeline' : 'Progress'}
+        {booking.status === 'completed' ? 'Timeline' : isMoneyOutcome ? 'Before it was cancelled' : 'Progress'}
       </Text>
-      <TripTimeline steps={timelineSteps} />
+      <TripTimeline steps={reachedSteps} />
     </View>
   );
 
@@ -3439,7 +3443,14 @@ export default function TrackingScreen() {
                   fullWidth
                 />
               ) : null}
-              {!sosActive && !queuedSos && isLiveBooking && !!booking.runner_id && (
+              {/* SOS on every live errand except one still waiting for its
+                  GCash/Maya payment (nothing has started; the red button over
+                  "Waiting for your payment" only alarmed). NOT gated on a
+                  runner: staff can take a runner off an accepted errand
+                  (return to matching — e.g. after the customer complained),
+                  and that customer must still reach SOS. The server accepts
+                  SOS on any errand that isn't completed or cancelled. */}
+              {!sosActive && !queuedSos && isLiveBooking && !awaitingPayment && (
                 <Button
                   title="Emergency SOS"
                   variant="danger"

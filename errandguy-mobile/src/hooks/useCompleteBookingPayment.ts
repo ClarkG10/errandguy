@@ -119,7 +119,17 @@ type ProgressProps = ComponentProps<typeof PaymentProgress>;
  */
 export function useCompleteBookingPayment(
   booking: Booking | null | undefined,
-  opts: { onSettled?: () => void; onRebook?: () => void } = {},
+  opts: {
+    onSettled?: () => void;
+    onRebook?: () => void;
+    /**
+     * Refetch as soon as there is a verdict (default), or only once the
+     * person closes the result. Home renders its card from the list it
+     * refetches: refreshing on the verdict swapped the card — and the
+     * result overlay inside it — away a second after it appeared.
+     */
+    settleOnVerdict?: boolean;
+  } = {},
 ): {
   /** The checkout to reopen, or null when there is nothing to pay. */
   checkoutUrl: string | null;
@@ -142,6 +152,8 @@ export function useCompleteBookingPayment(
   const ownedAttemptRef = useRef<string | null>(null);
   const onSettledRef = useRef(opts.onSettled);
   onSettledRef.current = opts.onSettled;
+  const settleOnVerdictRef = useRef(opts.settleOnVerdict !== false);
+  settleOnVerdictRef.current = opts.settleOnVerdict !== false;
   const onRebookRef = useRef(opts.onRebook);
   onRebookRef.current = opts.onRebook;
   const canRebook = !!opts.onRebook;
@@ -229,7 +241,7 @@ export function useCompleteBookingPayment(
     ? attempt?.status
     : null;
   useEffect(() => {
-    if (verdict) onSettledRef.current?.();
+    if (verdict && settleOnVerdictRef.current) onSettledRef.current?.();
   }, [verdict]);
 
   const dismiss = useCallback(() => {

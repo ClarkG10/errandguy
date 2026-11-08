@@ -9,7 +9,7 @@ import * as path from 'path';
  * Use a step that exists (…/10, /20, /80, /90) or an arbitrary `/[0.85]`.
  */
 const SRC = path.resolve(__dirname, '../../..');
-const MISSING_STEP = /\b(?:text|bg|border|ring)-[a-zA-Z0-9-]+\/(?:15|35|45|55|65|85)\b/g;
+const MISSING_STEP = /\b(?:text|bg|border|ring|from|via|to|divide|placeholder|shadow|outline|fill|stroke|decoration|accent|caret)-[a-zA-Z0-9-]+\/(?:15|35|45|55|65|85)\b/g;
 
 function sourceFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

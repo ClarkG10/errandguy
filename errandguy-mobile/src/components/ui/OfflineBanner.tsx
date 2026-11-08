@@ -86,7 +86,9 @@ export function OfflineBanner() {
     }
   }, [isOffline, reduceMotion, translateY]);
 
-  // A probe is in flight — drives the "Reconnecting…" pill.
+  // A Retry the person tapped is in flight — drives the "Reconnecting…" pill
+  // and holds the button. Only theirs: the automatic 10-second probe used to
+  // set it too, so on a weak connection Retry was disabled most of the time.
   const [reconnecting, setReconnecting] = useState(false);
   const mountedRef = useRef(true);
   useEffect(
@@ -95,7 +97,15 @@ export function OfflineBanner() {
     },
     [],
   );
-  const runPing = useCallback(() => {
+  const autoPing = useCallback(() => {
+    void pingHealth();
+  }, []);
+
+  // Foreground-only recovery probe — pauses in the background so we
+  // don't burn battery/cellular, resumes with an immediate ping. Silent.
+  useForegroundInterval(autoPing, PING_INTERVAL_MS, isOffline, true);
+
+  const handleRetry = useCallback(() => {
     const started = Date.now();
     setReconnecting(true);
     pingHealth().finally(() => {
@@ -105,14 +115,6 @@ export function OfflineBanner() {
       }, wait);
     });
   }, []);
-
-  // Foreground-only recovery probe — pauses in the background so we
-  // don't burn battery/cellular, resumes with an immediate ping.
-  useForegroundInterval(runPing, PING_INTERVAL_MS, isOffline, true);
-
-  const handleRetry = useCallback(() => {
-    runPing();
-  }, [runPing]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],

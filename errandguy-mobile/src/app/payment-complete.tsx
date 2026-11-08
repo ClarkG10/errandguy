@@ -150,7 +150,11 @@ export default function PaymentComplete() {
             <View>
               <Text style={styles.nextTitle}>What happens next</Text>
               <Text style={styles.nextBody}>
-                {scheduledLater
+                {/* Until the errand is loaded we can't tell a scheduled one
+                    from an immediate one — say only what's true of both. */}
+                {!booking
+                  ? 'Your errand is paid. Track it to see when a runner accepts.'
+                  : scheduledLater
                   ? 'We’ll match you with a runner shortly before your scheduled time.'
                   : pushPermission === 'granted'
                     ? 'We’re finding you a runner — you’ll get a notification when one accepts.'

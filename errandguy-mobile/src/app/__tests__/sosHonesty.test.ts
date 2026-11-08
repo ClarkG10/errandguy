@@ -247,3 +247,18 @@ describe('the failure toast keeps the actionable half of the copy', () => {
     expect(SOS_INTENT).toContain('Call 911 if you need help now');
   });
 });
+
+describe("the customer's SOS button", () => {
+  it('is on every live errand with or without a runner — only an unpaid one hides it', () => {
+    // Staff can take a runner off an accepted errand (return to matching,
+    // e.g. after the customer complained about them). Gating the button on a
+    // runner being assigned removed the customer's only SOS entry point then.
+    const code = stripComments(TRACKING);
+    const at = code.indexOf('title="Emergency SOS"');
+    expect(at).toBeGreaterThan(-1);
+    const condition = code.slice(code.lastIndexOf('{', code.lastIndexOf('&& (', at)), at);
+    expect(condition).toMatch(/isLiveBooking/);
+    expect(condition).toMatch(/!awaitingPayment/);
+    expect(condition).not.toMatch(/runner_id/);
+  });
+});

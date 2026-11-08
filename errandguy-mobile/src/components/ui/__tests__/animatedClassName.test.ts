@@ -22,17 +22,42 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
+/** Opening tags of animated elements, read brace-aware (an `=>` inside an
+ *  attribute doesn't end the tag). Covers Animated.X, Reanimated.X (as
+ *  tracking imports it) and Moti components. */
+function animatedTags(text: string): string[] {
+  const tags: string[] = [];
+  const start = /<(?:Animated|Reanimated)\.[A-Za-z]+\b|<Moti[A-Z][A-Za-z]*\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = start.exec(text))) {
+    let depth = 0;
+    let i = match.index + match[0].length;
+    for (; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      else if (ch === '>' && depth === 0 && text[i - 1] !== '=') break;
+    }
+    tags.push(text.slice(match.index, i + 1));
+  }
+  return tags;
+}
+
 describe('Animated components', () => {
-  it('never take className (NativeWind drops it) — Animated.* and Moti*', () => {
+  it('never take className (NativeWind drops it) — Animated.*, Reanimated.* and Moti*', () => {
     const offenders: string[] = [];
     for (const file of sourceFiles(SRC)) {
       const text = fs.readFileSync(file, 'utf8');
-      // The opening tag of each <Animated.X …> / <MotiView …>, up to its closing `>`.
-      const tags = text.match(/<(?:Animated\.[A-Za-z]+|Moti[A-Z][A-Za-z]*)\b[^>]*>/g) ?? [];
-      for (const tag of tags) {
+      for (const tag of animatedTags(text)) {
+        // className at the top level of the tag (not inside a child's props).
         if (/\sclassName=/.test(tag)) offenders.push(`${path.relative(SRC, file)}: ${tag.slice(0, 60)}`);
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it('the scanner sees past arrow functions in earlier props', () => {
+    const tag = animatedTags('<Animated.View onLayout={(e) => go(e)} className="flex-row">x</Animated.View>')[0];
+    expect(tag).toMatch(/className=/);
   });
 });

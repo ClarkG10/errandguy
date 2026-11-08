@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -59,6 +59,12 @@ export function ReceiptCaptureModal({
   // (with the gallery as the alternative) rather than only in a toast that
   // fades while the runner is still at the till.
   const [cameraDenied, setCameraDenied] = useState(false);
+  // The sheet stays mounted between openings: forget a past denial each time
+  // it opens, so a runner who turned the camera on in Settings gets it back
+  // (the camera is asked again, and a refusal shows this note again).
+  useEffect(() => {
+    if (visible) setCameraDenied(false);
+  }, [visible]);
 
   // Turn a silent permission denial into a recovery path: a deep-link to the
   // OS Settings so the runner isn't stuck with a dead capture button in a
