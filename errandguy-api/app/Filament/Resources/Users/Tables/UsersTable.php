@@ -48,6 +48,7 @@ class UsersTable
                     }),
                 TextColumn::make('status')
                     ->badge()
+                    ->formatStateUsing(fn (string $state): string => ucfirst($state))
                     ->color(fn (string $state): string => match ($state) {
                         'active' => 'success',
                         'suspended' => 'danger',
@@ -70,6 +71,7 @@ class UsersTable
                 SelectFilter::make('status')->options([
                     'active' => 'Active',
                     'suspended' => 'Suspended',
+                    'deleted' => 'Deleted',
                 ]),
                 TernaryFilter::make('email_verified'),
                 DateRangeFilter::make('created_at', 'Joined'),
@@ -157,6 +159,7 @@ class UsersTable
                 Textarea::make('reason')->required()->maxLength(500),
             ])
             ->visible(fn ($record): bool => $record->status !== 'suspended'
+                && ! $record->trashed()
                 && (auth('admin')->user()?->hasAnyRole(
                     AdminUser::ROLE_SUPER_ADMIN,
                     AdminUser::ROLE_ADMIN,
@@ -184,6 +187,7 @@ class UsersTable
             ->color('success')
             ->requiresConfirmation()
             ->visible(fn ($record): bool => $record->status === 'suspended'
+                && ! $record->trashed()
                 && (auth('admin')->user()?->hasAnyRole(
                     AdminUser::ROLE_SUPER_ADMIN,
                     AdminUser::ROLE_ADMIN,

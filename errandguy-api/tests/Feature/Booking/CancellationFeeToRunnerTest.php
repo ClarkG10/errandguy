@@ -137,6 +137,7 @@ class CancellationFeeToRunnerTest extends TestCase
         $this->actingAs($this->runner)->getJson('/api/v1/wallet/transactions')
             ->assertOk()
             ->assertJsonPath('data.0.type', 'cancel_fee')
-            ->assertJsonPath('data.0.display_description', 'Cancellation fee');
+            // Names the errand, so the runner can tell which one paid it.
+            ->assertJsonPath('data.0.display_description', "Cancellation fee for {$booking->errandType->name} #{$booking->booking_number}");
     }
 }

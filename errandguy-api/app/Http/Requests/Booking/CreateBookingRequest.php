@@ -269,6 +269,11 @@ class CreateBookingRequest extends FormRequest
             'pricing_mode.in' => 'Name your price is no longer available. Please update the app and book at the fixed price.',
             'payment_method.in' => 'That payment method isn’t available right now — please pay with GCash, Maya, cash or your ErrandGuy wallet.',
             'shopping_budget.max' => 'The most a runner can pay for your items is ₱'.self::peso(ErrandType::shoppingBudgetMax()).'.',
+            // Laravel's own wording leaked to customers: "The scheduled at
+            // field must be a date after +30 minutes."
+            'scheduled_at.after' => 'Pick a time at least 30 minutes from now.',
+            'scheduled_at.date' => 'That time isn’t valid — please pick it again.',
+            'scheduled_at.required_if' => 'Pick a time for your scheduled errand.',
         ];
     }
 }

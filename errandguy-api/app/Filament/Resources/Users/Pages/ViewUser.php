@@ -32,7 +32,9 @@ class ViewUser extends ViewRecord
                 ->icon(Heroicon::OutlinedBanknotes)
                 ->color('warning')
                 // Money surface: Super Admin + Finance only (canManageMoney).
-                ->visible(fn (): bool => auth('admin')->user()?->canManageMoney() ?? false)
+                // Not on an erased account: its balance was settled on erasure.
+                ->visible(fn (): bool => ! $this->getRecord()->trashed()
+                    && (auth('admin')->user()?->canManageMoney() ?? false))
                 ->modalHeading('Adjust wallet balance')
                 ->modalSubmitActionLabel('Apply adjustment')
                 ->requiresConfirmation()

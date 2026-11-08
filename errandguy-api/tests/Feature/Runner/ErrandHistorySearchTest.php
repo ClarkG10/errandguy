@@ -142,6 +142,18 @@ class ErrandHistorySearchTest extends TestCase
         $this->assertSame([], $this->search('THEIRS'));
     }
 
+    /** Only offered (runner_id is set at the offer), never accepted: not theirs. */
+    public function test_an_errand_cancelled_while_only_offered_is_not_in_their_history(): void
+    {
+        $this->errand(['booking_number' => 'EG-HIST-DONE']);
+        $this->errand(['booking_number' => 'EG-HIST-RAN', 'status' => 'cancelled', 'accepted_at' => now()->subHour()]);
+        $this->errand(['booking_number' => 'EG-HIST-OFFER', 'status' => 'cancelled', 'accepted_at' => null]);
+
+        $found = $this->search('EG-HIST');
+        sort($found);
+        $this->assertSame(['EG-HIST-DONE', 'EG-HIST-RAN'], $found);
+    }
+
     public function test_a_genuine_miss_still_returns_nothing(): void
     {
         $this->errand(['booking_number' => 'EG-REAL-1']);

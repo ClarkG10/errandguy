@@ -3,6 +3,7 @@
 namespace App\Exceptions;
 
 use App\Support\ApiPayload;
+use App\Support\DeviceSessions;
 use App\Support\ErrorCode;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -37,9 +38,24 @@ final class ApiExceptionRenderer
             ? self::json(ErrorCode::VALIDATION_FAILED, $e->validator->errors()->first() ?: null, $e->errors())
             : null);
 
-        $exceptions->render(fn (AuthenticationException $e, Request $r) => self::wantsJson($r)
-            ? self::json(ErrorCode::UNAUTHENTICATED)
-            : null);
+        // A sign-in revoked by a suspension says so (the same 403 EnsureUserActive
+        // gives a live one), so the app tells the person instead of showing an
+        // expired session. Any other missing or dead token is a plain 401.
+        $exceptions->render(function (AuthenticationException $e, Request $r) {
+            if (! self::wantsJson($r)) {
+                return null;
+            }
+            $suspended = DeviceSessions::suspendedTokenOwner($r->bearerToken());
+
+            return $suspended
+                ? self::json(
+                    ErrorCode::ACCOUNT_SUSPENDED,
+                    $suspended->status === 'banned'
+                        ? 'Your account has been permanently banned.'
+                        : 'Your account has been suspended. Please contact support.',
+                )
+                : self::json(ErrorCode::UNAUTHENTICATED);
+        });
 
         // Framework authorization (Gate/policy) failures.
         $exceptions->render(fn (AuthorizationException $e, Request $r) => self::wantsJson($r)

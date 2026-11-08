@@ -37,7 +37,13 @@ class BookingsTable
             ->columns([
                 TextColumn::make('booking_number')->searchable()->sortable(),
                 TextColumn::make('customer.full_name')->label('Customer')->searchable(),
-                TextColumn::make('runner.full_name')->label('Runner')->placeholder('—')->searchable(),
+                TextColumn::make('runner.full_name')->label('Runner')->placeholder('—')->searchable()
+                    // runner_id is set at the offer: on an errand nobody
+                    // accepted, the name is who it was offered to, not its runner.
+                    ->description(fn (Booking $record): ?string => $record->runner_id && ! $record->accepted_at
+                        && in_array($record->status, ['matched', 'cancelled', 'no_runner'], true)
+                        ? 'Offered, not accepted'
+                        : null),
                 TextColumn::make('status')->formatStateUsing(fn (?string $state): string => \App\Filament\Support\StatusLabels::booking($state))
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {

@@ -360,6 +360,39 @@ class AccountErasureTest extends TestCase
         $this->assertSame(0, \App\Models\AdminAlert::where('type', 'payout_destination_changed')->count());
     }
 
+    /**
+     * An erased account still read "active" in the staff panel, with Suspend
+     * and Adjust wallet offered, and its deletion payout showed no name on the
+     * Payouts page (the owner is soft-deleted).
+     */
+    public function test_staff_see_an_erased_account_as_deleted_and_its_payout_by_name(): void
+    {
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => 80, 'full_name' => 'Rhea Runner']);
+        RunnerProfile::create([
+            'user_id' => $runner->id, 'verification_status' => 'approved', 'preferred_types' => [],
+            'payout_channel' => 'gcash', 'ewallet_number' => '09171234567', 'payout_account_name' => 'Rhea Runner',
+        ]);
+        $this->actingAs(\App\Models\AdminUser::forceCreate([
+            'email' => 'boss@errandguy.test', 'password_hash' => 'x', 'full_name' => 'Boss',
+            'role' => 'super_admin', 'is_active' => true,
+        ]), 'admin');
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Users\Pages\ViewUser::class, ['record' => $runner->id])
+            ->callAction('eraseAccount', ['reason' => 'Email request'])
+            ->assertNotified('Account erased');
+
+        $erased = User::withTrashed()->find($runner->id);
+        $this->assertSame('deleted', $erased->status);
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Users\Pages\ViewUser::class, ['record' => $runner->id])
+            ->assertActionHidden('suspend')
+            ->assertActionHidden('adjustWallet');
+        $this->assertFalse(app(\App\Services\UserModerationService::class)->suspend($erased, 'x'));
+
+        \Livewire\Livewire::test(\App\Filament\Pages\Payouts::class)
+            ->assertSee('Deleted User');
+    }
+
     public function test_erasure_deletes_their_chat_photos_and_leaves_other_peoples_words_alone(): void
     {
         Storage::fake('media');

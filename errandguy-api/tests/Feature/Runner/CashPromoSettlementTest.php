@@ -112,6 +112,12 @@ class CashPromoSettlementTest extends TestCase
             'reference_id' => $booking->id, 'amount' => '-15.00',
         ]);
         $this->assertEquals('-15.00', $this->runner->fresh()->wallet_balance);
+
+        // The fare was collected at the door: the booking is paid, the same as
+        // its payment row and what the customer is told. It used to stay
+        // 'unpaid', so staff saw every finished cash errand as Unpaid.
+        $this->assertSame('completed', $booking->fresh()->status);
+        $this->assertSame('paid', $booking->fresh()->payment_status);
     }
 
     public function test_cash_promo_exceeding_fee_credits_the_runner_the_difference(): void

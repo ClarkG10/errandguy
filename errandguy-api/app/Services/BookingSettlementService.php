@@ -94,6 +94,9 @@ class BookingSettlementService
 
         if ($alreadySettled) {
             $this->markPaymentCompleted($booking->payment, $actor);
+            if ($booking->payment_method === 'cash') {
+                $this->markCashCollected($booking);
+            }
             return;
         }
 
@@ -140,6 +143,7 @@ class BookingSettlementService
             );
             $earnedForStats = $payoutAmount; // earned in cash, in person
             $collected = true;
+            $this->markCashCollected($booking);
         }
         // else: unsettled online payment — nothing was collected, credit nothing.
 
@@ -439,6 +443,22 @@ class BookingSettlementService
                 'payout' => $payout,
             ]);
         });
+    }
+
+    /**
+     * The runner collected the fare in cash at completion, so the booking is
+     * paid. It stayed 'unpaid' while its payment row said completed and the
+     * customer was told "paid in cash": staff saw a delivered, collected errand
+     * as Unpaid, and the payment filter couldn't find it. Nothing acts on a
+     * completed booking's payment_status (cancel, refund, matching and the
+     * reapers all skip completed errands; the completed-but-unpaid check
+     * already excludes cash), so this changes what is shown, not what is paid.
+     */
+    private function markCashCollected(Booking $booking): void
+    {
+        if ($booking->payment_status !== 'paid') {
+            $booking->update(['payment_status' => 'paid']);
+        }
     }
 
     /**

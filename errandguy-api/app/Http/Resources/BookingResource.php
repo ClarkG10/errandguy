@@ -373,8 +373,9 @@ class BookingResource extends JsonResource
      *     runner has REPORTED it (the budget is a ceiling, not an amount).
      *
      * Nothing is left to collect once the errand is completed: completion is
-     * the runner confirming the handover, cash included. A cash booking keeps
-     * payment_status 'unpaid' after settlement, so without this a finished cash
+     * the runner confirming the handover, cash included. A cash booking kept
+     * payment_status 'unpaid' after settlement (settlement marks it 'paid' since
+     * 2026-11-08; older rows are backfilled), so without this a finished cash
      * errand went on saying "Collect ₱X". Before completion nothing changes —
      * the no-signature rule (UpdateErrandStatusRequest) still sees money due.
      *

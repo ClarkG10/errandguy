@@ -30,6 +30,10 @@ class RunnerErrandHistoryController extends Controller
                 'reviews',
             ])
             ->whereIn('status', ['completed', 'cancelled'])
+            // An errand cancelled while it was only OFFERED to them (runner_id
+            // is set at the offer) is not one they ran: it showed in their
+            // history as "Cancelled ₱0.00".
+            ->where(fn ($q) => $q->where('status', 'completed')->orWhereNotNull('accepted_at'))
             ->orderByDesc('created_at');
 
         if ($request->filled('status')) {

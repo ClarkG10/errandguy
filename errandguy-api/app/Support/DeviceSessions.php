@@ -6,6 +6,7 @@ use App\Models\DeviceToken;
 use App\Models\RunnerProfile;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Laravel\Sanctum\PersonalAccessToken;
 
 /**
@@ -133,6 +134,59 @@ final class DeviceSessions
         }
 
         return $query->exists();
+    }
+
+    /** How long a sign-in revoked by a suspension still explains itself. */
+    private const SUSPENDED_TOKEN_DAYS = 30;
+
+    /**
+     * Before a suspension revokes their sign-ins: remember each one, so the
+     * phone still holding it is told WHY it was signed out. Revoking turns
+     * their next request into a plain 401, which the app can only read as an
+     * expired session — a user suspended mid-session was dropped back to the
+     * Welcome screen with no reason, and learnt it only by trying to log in.
+     *
+     * Keyed by token id and holding the token's hash, so only the phone that
+     * really holds that sign-in gets the answer (see suspendedTokenOwner).
+     */
+    public static function rememberSuspendedTokens(User $user): void
+    {
+        foreach ($user->tokens()->get(['id', 'token']) as $token) {
+            Cache::put(
+                'suspended_token:'.$token->id,
+                ['user_id' => (string) $user->id, 'hash' => $token->token],
+                now()->addDays(self::SUSPENDED_TOKEN_DAYS),
+            );
+        }
+    }
+
+    /**
+     * The user a revoked bearer token belonged to, when a suspension revoked
+     * it and they are still suspended; otherwise null (an unsuspended user's
+     * old sign-in is just expired). Best-effort: a cache outage answers null.
+     */
+    public static function suspendedTokenOwner(?string $bearer): ?User
+    {
+        if ($bearer === null || ! str_contains($bearer, '|')) {
+            return null;
+        }
+        [$id, $secret] = explode('|', $bearer, 2);
+        if (! ctype_digit($id) || $secret === '') {
+            return null;
+        }
+
+        try {
+            $remembered = Cache::get('suspended_token:'.$id);
+        } catch (\Throwable) {
+            return null;
+        }
+        if (! is_array($remembered) || ! hash_equals((string) ($remembered['hash'] ?? ''), hash('sha256', $secret))) {
+            return null;
+        }
+
+        $user = User::find($remembered['user_id'] ?? null);
+
+        return $user && in_array($user->status, ['suspended', 'banned'], true) ? $user : null;
     }
 
     /** Sign the user out of every device: all tokens and all push registrations. */

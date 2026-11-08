@@ -138,7 +138,7 @@ class WalletTransaction extends Model
         // forgot to eager-load. Never query per row: the one client endpoint that
         // shows the enriched label eager-loads (WalletController::transactions),
         // and everything else falls through to the generic label below.
-        if (in_array($this->type, ['payment', 'earning', 'refund'], true)
+        if (in_array($this->type, ['payment', 'earning', 'refund', 'cancel_fee'], true)
             && $this->reference_id
             && $this->relationLoaded('booking')) {
             $booking = $this->getRelation('booking');
@@ -150,6 +150,9 @@ class WalletTransaction extends Model
                     'payment' => 'Paid for',
                     'earning' => 'Earned from',
                     'refund' => 'Refund for',
+                    // Said only "Cancellation fee", so the runner couldn't tell
+                    // which cancelled errand paid it.
+                    'cancel_fee' => 'Cancellation fee for',
                 };
                 return "{$verb} {$typeName} #{$shortNumber}";
             }

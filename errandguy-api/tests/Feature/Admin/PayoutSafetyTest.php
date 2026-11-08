@@ -146,6 +146,18 @@ class PayoutSafetyTest extends TestCase
             ->assertTableActionVisible('checkWithXendit', $tx);
     }
 
+    /** Without Xendit keys "Send via Xendit" ("Real money leaves now") could only fail. */
+    public function test_send_via_xendit_is_not_offered_without_keys(): void
+    {
+        $tx = $this->pendingPayout();
+        Livewire::test(Payouts::class)->assertTableActionVisible('sendViaXendit', $tx);
+
+        config(['services.xendit.secret_key' => null]);
+        Livewire::test(Payouts::class)
+            ->assertTableActionHidden('sendViaXendit', $tx)
+            ->assertTableActionVisible('complete', $tx);
+    }
+
     public function test_a_sent_payout_can_never_be_failed_by_hand(): void
     {
         $tx = $this->sentPayout();

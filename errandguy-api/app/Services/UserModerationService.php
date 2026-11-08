@@ -31,7 +31,7 @@ class UserModerationService
      */
     public function suspend(User $user, string $reason): bool
     {
-        if ($user->status === 'suspended') {
+        if ($user->status === 'suspended' || $user->trashed()) {
             return false;
         }
 
@@ -41,7 +41,10 @@ class UserModerationService
             'suspended_at' => now(),
         ]);
         // Signed out everywhere, and no more pushes to their phones: a
-        // suspended account's notifications must not keep arriving.
+        // suspended account's notifications must not keep arriving. Each
+        // sign-in is remembered first, so the phone is told it was suspended
+        // rather than just signed out.
+        DeviceSessions::rememberSuspendedTokens($user);
         DeviceSessions::signOutEverywhere($user);
 
         RunnerProfile::switchOffline($user->id);

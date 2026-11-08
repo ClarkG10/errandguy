@@ -7,6 +7,7 @@ use App\Http\Requests\Booking\ReviewRequest;
 use App\Http\Resources\ReviewResource;
 use App\Models\Booking;
 use App\Models\Review;
+use App\Support\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,9 +22,7 @@ class ReviewController extends Controller
 
         // Check booking is completed
         if ($booking->status !== 'completed') {
-            return response()->json([
-                'message' => 'You can only review completed bookings.',
-            ], 422);
+            return $this->fail(ErrorCode::BOOKING_STATE_INVALID, 'You can only review completed bookings.', 422);
         }
 
         $reviewerId = $request->user()->id;
@@ -36,15 +35,11 @@ class ReviewController extends Controller
         } elseif ($reviewerId === $booking->runner_id) {
             $revieweeId = $booking->customer_id;
         } else {
-            return response()->json([
-                'message' => 'You are not a participant of this booking.',
-            ], 403);
+            return $this->fail(ErrorCode::FORBIDDEN, 'You are not a participant of this booking.', 403);
         }
 
         if (!$revieweeId) {
-            return response()->json([
-                'message' => 'No counter-party to review on this booking.',
-            ], 422);
+            return $this->fail(ErrorCode::BOOKING_STATE_INVALID, 'No counter-party to review on this booking.', 422);
         }
 
         // Check no existing review from this reviewer
@@ -53,9 +48,9 @@ class ReviewController extends Controller
             ->exists();
 
         if ($existingReview) {
-            return response()->json([
-                'message' => 'You have already reviewed this booking.',
-            ], 422);
+            // 422 on purpose: the app treats a repeat review as already done
+            // (an offline replay lands here). The code says why.
+            return $this->fail(ErrorCode::CONFLICT, 'You have already reviewed this booking.', 422);
         }
 
         // Creating the review recomputes the reviewee's average under a lock on

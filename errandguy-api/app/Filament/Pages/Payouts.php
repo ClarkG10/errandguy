@@ -348,7 +348,12 @@ class Payouts extends Page implements HasTable
             ->query(
                 // runnerProfile: the destination fallback for payouts requested
                 // before destinations were recorded on the payout.
-                WalletTransaction::query()->where('type', 'payout')->with(['user:id,full_name,phone,role', 'user.runnerProfile'])
+                // withTrashed: an account deleted with money left is paid out
+                // here, and its row showed no name at all.
+                WalletTransaction::query()->where('type', 'payout')->with([
+                    'user' => fn ($q) => $q->withTrashed()->select(['id', 'full_name', 'phone', 'role', 'deleted_at']),
+                    'user.runnerProfile',
+                ])
             )
             // Pending work first, and OLDEST pending at the top — the person
             // who has been waiting longest for their own money is the one to pay
@@ -430,7 +435,12 @@ class Payouts extends Page implements HasTable
                     ->label('Send via Xendit')
                     ->icon(Heroicon::OutlinedPaperAirplane)
                     ->color('primary')
-                    ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending' && ! $record->isSentToGateway())
+                    // Not offered without Xendit keys: it promised "Real money
+                    // leaves now" and then could only fail. Paid by hand instead
+                    // ("Mark completed").
+                    ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending'
+                        && ! $record->isSentToGateway()
+                        && filled(config('services.xendit.secret_key')))
                     ->modalHeading('Send this payout via Xendit')
                     ->modalDescription(fn (WalletTransaction $record): string => 'Disburses ₱'
                         .number_format(abs((float) $record->amount), 2).' to '
@@ -485,7 +495,10 @@ class Payouts extends Page implements HasTable
                             self::alertDestinationChange($recorded, $data, $record->user, (float) $record->amount, $record->id, null);
                         } catch (\Throwable $e) {
                             self::alertDestinationChange($recorded, $data, $record->user, (float) $record->amount, $record->id, $e->getMessage());
-                            AdminNotify::error('Payout failed', $e, $record, context: [
+                            // The payout stays pending either way (refused, or
+                            // unanswered and checked later), so "failed" was wrong;
+                            // the message says which.
+                            AdminNotify::error('Payout still pending', $e, $record, context: [
                                 'Account' => $record->user?->full_name,
                             ]);
                         }

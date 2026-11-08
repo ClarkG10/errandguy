@@ -111,6 +111,21 @@ class CreateBookingTest extends TestCase
             ->assertJsonValidationErrors(['scheduled_at']);
     }
 
+    public function test_a_too_soon_scheduled_time_is_explained_in_plain_words(): void
+    {
+        Bus::fake();
+        $data = array_merge($this->validBookingData, [
+            'schedule_type' => 'scheduled',
+            'scheduled_at' => now()->addMinutes(10)->toIso8601String(),
+        ]);
+
+        // Was Laravel's "The scheduled at field must be a date after +30 minutes."
+        $this->actingAs($this->customer)
+            ->postJson('/api/v1/bookings', $data)
+            ->assertStatus(422)
+            ->assertJsonPath('errors.scheduled_at.0', 'Pick a time at least 30 minutes from now.');
+    }
+
     public function test_booking_scheduled_within_30_days_is_accepted(): void
     {
         Bus::fake();

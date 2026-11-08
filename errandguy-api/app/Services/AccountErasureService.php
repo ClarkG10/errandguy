@@ -248,6 +248,10 @@ class AccountErasureService
             // Anonymize the account row itself. Only these columns are written
             // (the balance was just debited through the ledger on its own row).
             $user->update([
+                // Staff saw an erased account as "active", with Suspend and
+                // Adjust wallet still offered. EnsureUserActive already treats
+                // 'deleted' as a dead account.
+                'status' => 'deleted',
                 'full_name' => self::ERASED_NAME,
                 'email' => null,
                 'phone' => null,
