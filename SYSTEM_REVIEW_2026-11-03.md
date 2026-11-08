@@ -1028,3 +1028,110 @@ Production was never touched during these checks. The throwaway server used SQLi
 3. Publish the app with `eas update`.
 
 The app works against the old server, but push-tap read marks need the new one.
+
+## 11. Fourth pass (2026-11-08): real workflows, end to end
+
+The same brief was sent a fourth time. This pass did what the earlier ones could only approximate: it **ran every workflow from start to finish** with real accounts on a throwaway copy of the system. A customer, a runner and staff of each role went through these flows in the app's web build and the staff panel:
+- sign-up;
+- runner onboarding with KYC approval;
+- a cash errand, a wallet errand and Buy-for-me;
+- cancellations before and after accept;
+- a payout, a support ticket, an SOS and account deletion;
+- role limits and edge cases.
+
+At each step the numbers on every screen and in the database were compared. A separate review re-read the design pass (§10.5).
+
+Production was never touched. The throwaway server ran on SQLite with its own storage, a real queue worker and the scheduler. The web build's override file pointing at it was deleted afterwards, and no servers were left running.
+
+### 11.1 Found by running the workflows
+
+**W1 · Critical · Staff could not answer any support ticket**
+- **Before:** Reply → Submit failed with a server error. `support_messages.sender_id` had a foreign key to `users`, but a staff reply stores the staff member's `admin_users` id. Every reply failed the key, so tickets could be opened but never answered. A test had even recorded this as a known schema bug. MySQL enforces the same key, so production has it too.
+- **Change:**
+  - a migration drops that one key; it is found by column, so it works on MySQL and SQLite and is safe to re-run;
+  - the customer's thread shows a staff reply as "Support", never a customer's name.
+- **Test:** staff reply through the panel, customer reads it. It fails with the exact FOREIGN KEY error without the migration.
+- **Status:** Fixed.
+
+**W2 · High · A new runner landed on the customer Home**
+- **Before:** after choosing "Errand runner" at sign-up, the server switched the role, but the app showed the customer Home until it was reloaded. The store keeps the role twice, and role-select updated only one copy.
+- **Change:** role-select stores the server's fresh profile, the same as the Profile switch. The store also keeps both copies in step whenever a role is written.
+- **Status:** Fixed.
+
+**W3 · High · Fare rows didn't add up to the total**
+- **Before:** every fare carries a vehicle premium (motorcycle ₱25, car ₱60) that no row showed. A motorcycle errand read ₱50 + ₱6.45 + ₱12.22 = ₱68.67 under a ₱93.67 total, on Review, the receipt and the staff "Fee breakdown". The booking never stored the premium.
+- **Change:** a "Vehicle fee" row:
+  - on an estimate it comes from the server;
+  - on a booking it is recovered as what the total holds beyond the stored rows, the same rule the runner's earnings already used;
+  - it is left out where that can't be told (an old name-your-price errand, a hand-edited row).
+- **Status:** Fixed.
+
+| # | Priority | Where | Before → after | Status |
+|---|---|---|---|---|
+| W4 | Medium | Cash errands, staff panel | A finished cash errand stayed "Unpaid" (the payment row said completed; the customer was told "paid in cash"). Settlement now marks it paid. A one-time migration fixes the ones already finished. Nothing acts on a completed errand's payment status, and staff refunds exclude cash. | Fixed |
+| W5 | Medium | Buy-for-me, customer | The runner was told "Collect ₱604.17"; the customer saw ₱116.67 and ₱487.50 on separate lines. The cash strip now names the one total, with the split. After the receipt is uploaded, it no longer says "your runner will upload the receipt next". | Fixed |
+| W6 | Medium | App after a cancel | Home kept the cancelled errand ("Runner matched — confirming…") and the wallet its old balance until a reload. The cache wipe is asynchronous, so an older answer could win: a fetch already on the way, or storage read before the wipe finished. Any answer from before an invalidation is now refused. A cancel also refreshes the wallet, including when the reply was lost. | Fixed |
+| W7 | Medium | Suspension | A user suspended mid-session was dropped to Welcome with no reason (revoking the sign-in makes a plain 401). The revoked sign-in now answers "Your account has been suspended", and the app already shows that. Only the phone holding that exact sign-in gets the answer. | Fixed |
+| W8 | Medium | Runner, handover | "Errand complete" showed at *delivered*, before the cash and signature. It now says "Finish the handover". | Fixed |
+| W9 | Medium | Runner, arrival prompt | Reopening an errand, the "mark arrived?" prompt fired on the cached older status and stayed up after the real one loaded. Its button would have pushed the errand a step further. The prompt now closes when the status moves on. | Fixed |
+| W10 | Medium | Erased accounts, staff panel | An erased account showed "active", with Suspend and Adjust wallet offered. Its deletion payout had no name on Payouts. It is now "deleted" (and fixed for past ones), those actions are hidden, and Payouts names it "Deleted User". | Fixed |
+| W11 | Medium | "No runner" errands | Home showed one as "Finding a runner" under "2 active", and Profile said "Errand in progress" and blocked the switch to runner mode. Tracking and staff call it ended. It no longer counts as live. | Fixed |
+| W12 | Low | Tracking | While an offer waited, and after a cancel before anyone accepted, tracking showed "On the way · Call · Message" for a "?" runner, and "Report this person" with no one behind it. Both now need a runner who accepted. | Fixed |
+| W13 | Low | Runner history, staff list | An errand cancelled while only *offered* showed in the runner's history as "Cancelled ₱0.00", and in the staff list under that runner. It is out of their history, and the staff list says "Offered, not accepted". | Fixed |
+| W14 | Low | Payouts | "Send via Xendit — Real money leaves now" was offered with no Xendit keys, then said "Payout failed" while the payout stayed pending. Not offered without keys; the error says "Payout still pending". | Fixed |
+| W15 | Low | Money format | Negative amounts read "₱-12.22" ("Bal ₱-12.22"). Now "−₱12.22". A cancellation fee row names its errand. | Fixed |
+| W16 | Low | Errors | "The scheduled at field must be a date after +30 minutes." is now "Pick a time at least 30 minutes from now". Review errors carry error codes. | Fixed |
+| D1 | High | Tracking (design pass) | Found by the design review: SOS was hidden when staff took the runner off an errand mid-trip. It is shown on every live errand except one still waiting for its GCash payment. | Fixed (5370adf) |
+
+### 11.2 What worked fully
+
+- **Customer:** sign-up (wrong code, then the right one), profile, saved address, trusted contact.
+- **Runner:** onboarding, then staff approving each document and the runner.
+- **Cash errand:** every step, polled updates within 20 seconds. Commission ₱12.22 = ₱93.67 − ₱81.45, and ₱81.45 agreed on five screens. Both ratings; a repeat review refused; wallets reconciled.
+- **Wallet and cancellations:** a free cancel before accept; ₱20 to the runner and ₱73.67 back after accept.
+- **Buy-for-me:** over-budget refused, and settlement correct.
+- **Payout:** paid by hand with a reference, audited, and the runner told.
+- **SOS:** honest wording on both sides, and the staff alert with location.
+- **Deletion:** blocked during an errand, then the balance paid out and the account erased.
+- **Role limits:** every cross-account and cross-role request refused.
+- **Double tap:** a repeated booking creates one booking, with one charge.
+- **Other edges:** expired code, lockout, scheduled-too-soon and back-navigation all held.
+
+### 11.3 Couldn't be tested here
+
+- **Not available locally:** GCash and Maya payments, Xendit payouts, push and SMS.
+  - Both sides said honestly that the trusted-contact text wasn't sent.
+- **Realtime server not running:** the app fell back to polling.
+  - Offers reached the runner in 27–57 seconds, leaving about 60 of the 90-second accept window.
+  - A lapsed offer stayed on runner Home for up to 30 seconds; with realtime it clears in about a second.
+- **Phone-only:** proof, receipt and signature uploads from the camera; the map and signature pad.
+  - A rejected proof upload stuck at "Uploading 0%" in the web build only. The revert code is in place, but needs checking on a phone.
+- **True concurrency:** the local PHP server handles one request at a time.
+
+### 11.4 Still open
+
+**Needs your decision:**
+- **Unverified accounts:** may an account with neither email nor phone verified place a booking? Today it can.
+- **Earnings vs cancellation fees:** should runner earnings count cancellation fees? Today they show in the wallet but not in earnings.
+- **"No runner" errands:** the server refuses to cancel one, and the app never offers cancel there. It closes itself at the matching deadline.
+
+**Small:**
+- Reloading Review with an empty draft (web only).
+- An SOS raised on another device isn't shown on this one's tracking.
+- The app's last payment method isn't pre-selected.
+
+### 11.5 Quality assurance (fourth pass)
+
+| Check | Result |
+|---|---|
+| Server tests on SQLite | 1,540 passed |
+| Server tests on MySQL 9.7 (throwaway database, dropped afterwards) | 1,538 passed, 1 skipped (the SQLite-only backup test, expected), 1 error in a new test: its sample booking number was longer than the 20-character column, which MySQL enforces and SQLite doesn't. The test was fixed, and the 99 tests in every changed suite then passed on MySQL. Running all four migrations on MySQL is covered by this run. |
+| App type check | Clean |
+| App tests | 1,802 passed |
+| New tests fail without their fix | Checked by hand for each of these: support reply, cash marked paid, suspension notice, erased-account actions and Payouts name, invalidation races |
+
+### 11.6 Release order
+
+1. In Forge, deploy the server first. It runs **four migrations**: `push_tickets` (§10), staff replies to support, marking finished cash errands paid, and marking erased accounts deleted.
+2. Run `php artisan errandguy:preflight` once.
+3. Publish the app with `eas update`.
