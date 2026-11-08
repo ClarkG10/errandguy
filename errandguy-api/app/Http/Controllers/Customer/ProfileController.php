@@ -79,12 +79,17 @@ class ProfileController extends Controller
     /**
      * Why this user can't switch to $role right now, or null when they can.
      * Mirrors the app's own guards: a customer with an errand still open
-     * (the same set GET /bookings/active lists) can't become a runner, and a
+     * (GET /bookings/active's set, less a no-runner one) can't become a runner, and a
      * runner holding an offer or an errand can't become a customer.
      */
     private function roleSwitchBlocker(\App\Models\User $user, string $role): ?string
     {
-        if ($role === 'runner' && $user->customerBookings()->active()->exists()) {
+        // A no-runner errand doesn't hold the switch: nobody is on it, the app
+        // shows it as ended, and the matching deadline closes it. Counting it
+        // left a customer the app let through stuck on a 409 they could do
+        // nothing about (a no-runner errand can't be cancelled).
+        if ($role === 'runner'
+            && $user->customerBookings()->active()->where('status', '!=', 'no_runner')->exists()) {
             return 'You have an errand in progress. Wait until it’s finished or cancel it before switching to runner mode.';
         }
 

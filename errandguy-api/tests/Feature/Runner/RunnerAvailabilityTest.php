@@ -230,6 +230,17 @@ class RunnerAvailabilityTest extends TestCase
         $this->assertSame('runner', $this->customer->fresh()->role);
     }
 
+    /** Nobody is on a no-runner errand and it can't be cancelled: it must not trap the switch. */
+    public function test_a_no_runner_errand_does_not_block_switching_to_runner_mode(): void
+    {
+        $this->booking(['status' => 'no_runner']);
+
+        $this->actingAs($this->customer)
+            ->putJson('/api/v1/user/profile', ['role' => 'runner'])
+            ->assertOk();
+        $this->assertSame('runner', $this->customer->fresh()->role);
+    }
+
     public function test_saving_the_same_role_mid_errand_is_not_a_switch(): void
     {
         $this->booking(['status' => 'heading_to_pickup', 'runner_id' => $this->runner->id]);

@@ -57,6 +57,19 @@ class SuspendedMidSessionTest extends TestCase
         $this->profileAs('no-bar-at-all')->assertStatus(401);
     }
 
+    /** The notice is a courtesy: a cache outage must not stop the suspension itself. */
+    public function test_a_cache_outage_still_suspends_and_signs_them_out(): void
+    {
+        $user = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $user->createToken('device:phone-123456');
+        Cache::partialMock()->shouldReceive('put')->andThrow(new \RuntimeException('cache down'));
+
+        $this->assertTrue(app(UserModerationService::class)->suspend($user, 'Fraud report'));
+
+        $this->assertSame('suspended', $user->fresh()->status);
+        $this->assertSame(0, $user->tokens()->count(), 'signed out everywhere despite the cache');
+    }
+
     public function test_once_unsuspended_the_old_sign_in_is_simply_expired(): void
     {
         Cache::flush();

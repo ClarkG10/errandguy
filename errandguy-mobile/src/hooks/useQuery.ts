@@ -353,12 +353,15 @@ export async function invalidateQuery(
   //    keys is refused from here on (see invalidatedSeq).
   invalidatedSeq.set(prefix, ++clock);
   invalidatedMs.set(prefix, Date.now());
-  // 1. Notify mounted hooks immediately so the UI starts revalidating
+  // 1. Drop the in-memory axios micro-cache AND in-flight requests for related
+  //    URLs first: the refetch below would otherwise join a GET that left
+  //    before the mutation (the api layer dedupes in-flight GETs) and accept
+  //    its answer as new.
+  apiCache.invalidate(Array.isArray(key) ? String(key[0]) : key);
+  // 2. Notify mounted hooks immediately so the UI starts revalidating
   //    even before the AsyncStorage delete resolves.
   notifyPrefix(prefix);
-  // 2. Wipe persisted entries. CacheService stores under
+  // 3. Wipe persisted entries. CacheService stores under
   //    '@errandguy_cache:' + key, so pass the unprefixed form.
   await CacheService.removeByPrefix(prefix);
-  // 3. Drop the in-memory axios micro-cache for related URLs.
-  apiCache.invalidate(Array.isArray(key) ? String(key[0]) : key);
 }

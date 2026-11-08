@@ -151,12 +151,19 @@ final class DeviceSessions
      */
     public static function rememberSuspendedTokens(User $user): void
     {
-        foreach ($user->tokens()->get(['id', 'token']) as $token) {
-            Cache::put(
-                'suspended_token:'.$token->id,
-                ['user_id' => (string) $user->id, 'hash' => $token->token],
-                now()->addDays(self::SUSPENDED_TOKEN_DAYS),
-            );
+        // Best-effort, like the read side: a cache outage here must never stop
+        // the suspension itself (sign-ins revoked, runner taken offline, staff
+        // alerted about live errands), which runs right after this.
+        try {
+            foreach ($user->tokens()->get(['id', 'token']) as $token) {
+                Cache::put(
+                    'suspended_token:'.$token->id,
+                    ['user_id' => (string) $user->id, 'hash' => $token->token],
+                    now()->addDays(self::SUSPENDED_TOKEN_DAYS),
+                );
+            }
+        } catch (\Throwable $e) {
+            report($e);
         }
     }
 
