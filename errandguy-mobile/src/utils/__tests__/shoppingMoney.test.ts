@@ -94,4 +94,19 @@ describe('itemsCashReadyLine', () => {
   it('has nothing to say without a budget (not a shopping errand)', () => {
     expect(itemsCashReadyLine({ shopping_budget: null, actual_item_cost: null })).toBeNull();
   });
+
+  // The runner was told "Collect ₱604.17 (₱116.67 fare + ₱487.50 you
+  // fronted)" while the customer saw ₱116.67 and ₱487.50 on separate lines
+  // and no ₱604.17 anywhere.
+  it('on a cash errand, names the one total the runner will collect', () => {
+    expect(
+      itemsCashReadyLine({ shopping_budget: 600, actual_item_cost: 487.5, items_cash_due: 487.5 }, 116.67),
+    ).toBe('Have ₱604.17 cash ready (₱487.50 for the items + ₱116.67 fare)');
+    expect(
+      itemsCashReadyLine({ shopping_budget: 600, actual_item_cost: null, items_cash_due: null }, 116.67),
+    ).toBe('Have up to ₱716.67 cash ready (up to ₱600.00 for the items + ₱116.67 fare)');
+    expect(
+      itemsCashReadyLine({ shopping_budget: 600, actual_item_cost: 0, items_cash_due: 0 }, 116.67),
+    ).toBe('Have ₱116.67 cash ready for the fare');
+  });
 });

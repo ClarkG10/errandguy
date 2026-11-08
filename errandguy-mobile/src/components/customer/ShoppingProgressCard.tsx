@@ -36,9 +36,12 @@ export interface ShoppingProgressCardProps {
    * what was picked up, so the live copy would be misleading.
    */
   live?: boolean;
+  /** The runner has uploaded the receipt, so "will upload the receipt next"
+   *  is no longer true. */
+  receiptIn?: boolean;
 }
 
-export function ShoppingProgressCard({ items, live = false }: ShoppingProgressCardProps) {
+export function ShoppingProgressCard({ items, live = false, receiptIn = false }: ShoppingProgressCardProps) {
   const list = useMemo(() => (Array.isArray(items) ? items : []), [items]);
   const { picked, total, ratio, allPicked } = shoppingProgress(list);
   const collapsible = total > COLLAPSE_THRESHOLD;
@@ -147,7 +150,9 @@ export function ShoppingProgressCard({ items, live = false }: ShoppingProgressCa
       {live && (
         <Text className="text-xs font-montserrat text-textTertiary mt-3">
           {allPicked
-            ? 'Everything on your list is picked up. Your runner will upload the receipt next.'
+            ? receiptIn
+              ? 'Everything on your list is picked up, and the receipt is in.'
+              : 'Everything on your list is picked up. Your runner will upload the receipt next.'
             : 'Items tick off here as your runner picks them up.'}
         </Text>
       )}

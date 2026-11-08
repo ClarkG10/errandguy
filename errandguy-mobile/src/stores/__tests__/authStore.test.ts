@@ -128,6 +128,16 @@ describe('authStore', () => {
       expect(useAuthStore.getState().user?.full_name).toBe('New Name');
     });
 
+    it('a role written here also moves the role the navigators read', () => {
+      // role-select used to write only user.role, so a new runner landed on
+      // the customer Home until the app was reloaded.
+      act(() => useAuthStore.getState().setUser(makeUser({ role: 'customer' })));
+      act(() => useAuthStore.getState().updateProfile({ role: 'runner' }));
+
+      expect(useAuthStore.getState().user?.role).toBe('runner');
+      expect(useAuthStore.getState().role).toBe('runner');
+    });
+
     it('does nothing when user is null', () => {
       act(() => useAuthStore.getState().updateProfile({ full_name: 'Nobody' }));
       expect(useAuthStore.getState().user).toBeNull();

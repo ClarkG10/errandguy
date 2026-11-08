@@ -100,6 +100,30 @@ function subscribe(cacheKey: string, cb: () => void) {
   };
 }
 
+// ── What an invalidation has made stale ─────────────────────────────────
+// invalidateQuery's storage wipe is asynchronous and nobody awaits it, so for
+// a moment after a mutation the old answer can still come back:
+//   - a fetch that started BEFORE the mutation answers after it, and was
+//     shown and written back to storage (the wipe already ran);
+//   - the invalidation's refetch joined that same in-flight fetch;
+//   - a screen mounting right after the mutation read storage before the
+//     wipe finished, and its value looked fresh.
+// After a cancel, Home kept the cancelled errand as "Runner matched —
+// confirming…" until a reload. So each invalidation is stamped, and anything
+// from before the stamp is refused: a fetch by order (a counter, so two in
+// the same millisecond still order), a stored entry by its fetchedAt.
+let clock = 0;
+const invalidatedSeq = new Map<string, number>();
+const invalidatedMs = new Map<string, number>();
+
+function latestFor(map: Map<string, number>, cacheKey: string): number {
+  let latest = 0;
+  for (const [prefix, at] of map) {
+    if (at > latest && cacheKey.startsWith(prefix)) latest = at;
+  }
+  return latest;
+}
+
 function notifyPrefix(prefix: string) {
   for (const [key, set] of subscribers) {
     if (key.startsWith(prefix)) {
@@ -137,7 +161,7 @@ export function useQuery<T>(
   // only triggers for the SAME key. Sharing it across keys handed a new key
   // (another period, another search) the old key's request: the new key was
   // never fetched and the old answer showed under the new label.
-  const inflightRef = useRef<{ key: string; promise: Promise<void>; token: object } | null>(null);
+  const inflightRef = useRef<{ key: string; promise: Promise<void>; token: object; seq: number } | null>(null);
   // The key this hook is showing now. A request for a key the screen has
   // since left still caches its answer, but never touches the screen's state.
   const currentKeyRef = useRef(cacheKey);
@@ -157,13 +181,27 @@ export function useQuery<T>(
   }, []);
 
   const revalidate = useCallback(async () => {
-    if (inflightRef.current?.key === cacheKey) return inflightRef.current.promise;
+    const pending = inflightRef.current;
+    // Join a fetch for the same key only if no invalidation came after it
+    // started: that fetch may carry the answer from before the mutation.
+    if (pending?.key === cacheKey && pending.seq > latestFor(invalidatedSeq, cacheKey)) {
+      return pending.promise;
+    }
     const fetcher = fetcherRef.current;
     const token = {};
+    const seq = ++clock;
     const isCurrent = () => mountedRef.current && currentKeyRef.current === cacheKey;
+    let superseded = false;
     const promise = (async () => {
       try {
         const fresh = await fetcher();
+        // Invalidated while this was on the way: the answer may predate the
+        // mutation. Neither show it nor store it — the invalidation started
+        // its own fetch, which settles loading.
+        if (latestFor(invalidatedSeq, cacheKey) > seq) {
+          superseded = true;
+          return;
+        }
         const now = Date.now();
         if (isCurrent()) {
           lastFetchedRef.current = now;
@@ -180,11 +218,11 @@ export function useQuery<T>(
       } catch (err) {
         if (isCurrent()) setError(err as Error);
       } finally {
-        if (isCurrent()) setLoading(false);
+        if (isCurrent() && !superseded) setLoading(false);
         if (inflightRef.current?.token === token) inflightRef.current = null;
       }
     })();
-    inflightRef.current = { key: cacheKey, promise, token };
+    inflightRef.current = { key: cacheKey, promise, token, seq };
     return promise;
   }, [cacheKey, ttl]);
 
@@ -195,8 +233,12 @@ export function useQuery<T>(
     }
     let cancelled = false;
     (async () => {
-      const cached = await CacheService.get<CachedEntry<T>>(cacheKey);
+      const stored = await CacheService.get<CachedEntry<T>>(cacheKey);
       if (cancelled || !mountedRef.current) return;
+      // An entry from before the latest invalidation is one the wipe hasn't
+      // reached yet — not a value to show.
+      const cached =
+        stored && (stored.fetchedAt ?? 0) < latestFor(invalidatedMs, cacheKey) ? null : stored;
       if (cached && cached.value !== undefined) {
         setData(cached.value);
         setLoading(false);
@@ -307,6 +349,10 @@ export async function invalidateQuery(
   key: string | (string | number | null | undefined)[],
 ): Promise<void> {
   const prefix = buildKey(key);
+  // 0. Stamp it first, so what is already in flight or in storage for these
+  //    keys is refused from here on (see invalidatedSeq).
+  invalidatedSeq.set(prefix, ++clock);
+  invalidatedMs.set(prefix, Date.now());
   // 1. Notify mounted hooks immediately so the UI starts revalidating
   //    even before the AsyncStorage delete resolves.
   notifyPrefix(prefix);

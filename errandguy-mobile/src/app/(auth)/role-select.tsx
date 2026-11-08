@@ -8,6 +8,7 @@ import { Package, Bike, Check } from 'lucide-react-native';
 import { Button } from '../../components/ui/Button';
 import { Illustration } from '../../components/ui/Illustration';
 import { useAuth } from '../../hooks/useAuth';
+import { useAuthStore } from '../../stores/authStore';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { userService } from '../../services/user.service';
 import { toast } from '../../stores/toastStore';
@@ -45,6 +46,7 @@ const roles: RoleOption[] = [
 export default function RoleSelectScreen() {
   const router = useRouter();
   const { updateProfile } = useAuth();
+  const setUser = useAuthStore((s) => s.setUser);
   const { contentMaxWidth } = useResponsive();
   const reduceMotion = useReducedMotion();
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
@@ -55,8 +57,12 @@ export default function RoleSelectScreen() {
 
     setLoading(true);
     try {
-      await userService.updateProfile({ role: selectedRole });
-      updateProfile({ role: selectedRole });
+      const res = await userService.updateProfile({ role: selectedRole });
+      // The server's copy carries what the switch created (a new runner's
+      // profile) and sets the role every navigator gate reads.
+      const fresh = res.data?.data;
+      if (fresh?.role === selectedRole) setUser(fresh);
+      else updateProfile({ role: selectedRole });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 
       if (selectedRole === 'runner') {

@@ -101,7 +101,7 @@ describe('customer tracking — the terminal receipt', () => {
     expect(isFinished).not.toMatch(/'delivered'/);
 
     const card = SOURCE.slice(
-      SOURCE.indexOf('const runnerCard = booking.runner_id'),
+      SOURCE.indexOf('const runnerCard = runnerTookIt'),
       SOURCE.indexOf('// Trip route — the timeline stays surfaced'),
     );
     // Call chip gated…

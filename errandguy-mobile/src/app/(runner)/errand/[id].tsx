@@ -558,11 +558,22 @@ export default function ActiveErrandScreen() {
   // focused — the navigate screen (pushed on top) owns its own arrival
   // confirm, so gating on focus avoids a double prompt underneath it.
   const isFocused = useIsFocused();
-  const [showArrivalPrompt, setShowArrivalPrompt] = useState(false);
+  // The prompt belongs to the status it was raised for. Reopening an errand
+  // first paints the cached booking: at an older travel status the watcher
+  // fired, then the fresh status (already arrived) loaded and the prompt
+  // stayed up — and its "Mark arrived" would have pushed the errand a step
+  // further. It now closes the moment the status moves on.
+  const [arrivalPromptStatus, setArrivalPromptStatus] = useState<string | null>(null);
+  // The status on screen, for the detector's callback (assigned below, once
+  // the booking is known).
+  const arrivalStatusRef = useRef<string | null>(null);
+  const setShowArrivalPrompt = useCallback((show: boolean) => {
+    setArrivalPromptStatus(show ? arrivalStatusRef.current : null);
+  }, []);
   const handleArrivalDetected = useCallback(() => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     setShowArrivalPrompt(true);
-  }, []);
+  }, [setShowArrivalPrompt]);
 
   // Single source of truth: the API. The runner-facing endpoint
   // (RunnerErrandController@show) is scoped by `runnerBookings()` on
@@ -600,6 +611,8 @@ export default function ActiveErrandScreen() {
   // the handler always sees the booking the screen is currently showing.
   const bookingRef = useRef<Booking | null>(booking);
   bookingRef.current = booking;
+  arrivalStatusRef.current = booking?.status ?? null;
+  const showArrivalPrompt = arrivalPromptStatus !== null && arrivalPromptStatus === booking?.status;
   // Same reason for the cache writer: useQuery's `mutate` is re-created on
   // every data change, so a handler holding the first render's copy would be
   // writing through a stale closure. Ref it instead of depending on it.
@@ -933,7 +946,11 @@ export default function ActiveErrandScreen() {
         return isSingleLocation ? 'Complete the task' : 'On the way to drop-off';
       case 'arrived_at_dropoff':
         return 'Hand off the order';
+      // Delivered is not done: the cash (on a cash errand) and the customer's
+      // signature are still to come. "Errand complete" here let a runner walk
+      // away without collecting the fare.
       case 'delivered':
+        return 'Finish the handover';
       case 'completed':
         return 'Errand complete';
       case 'cancelled':

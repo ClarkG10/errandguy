@@ -4,7 +4,10 @@ export function formatCurrency(amount: number): string {
   // value. Anything that isn't a finite number falls back to 0.
   const n = typeof amount === 'number' ? amount : Number(amount);
   const safe = Number.isFinite(n) ? n : 0;
-  return `₱${safe.toLocaleString('en-PH', {
+  // A negative reads "−₱12.22", not "₱-12.22" (a runner's balance after a cash
+  // commission showed "Bal ₱-12.22"). Nothing that rounds to zero gets a sign.
+  const sign = Math.round(safe * 100) < 0 ? '−' : '';
+  return `${sign}₱${Math.abs(safe).toLocaleString('en-PH', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;

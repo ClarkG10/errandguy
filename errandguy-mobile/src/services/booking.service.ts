@@ -13,6 +13,17 @@ const invalidateBookingsCaches = (id?: string) => {
   if (id) invalidateQuery(['booking', id]);
 };
 
+/**
+ * What a cancellation changes: the errand lists and, for a paid errand, the
+ * wallet the refund lands in (Home's balance pill and the Wallet screen showed
+ * the old balance until a reload). Exported for a cancel whose answer was lost
+ * but which the server confirms happened.
+ */
+export const invalidateAfterCancel = (id: string) => {
+  invalidateBookingsCaches(id);
+  invalidateQuery(['wallet']);
+};
+
 // ── Fare-estimate prefetch cache (P1) ──────────────────────────────────────
 // POST /bookings/estimate is the sole gate on the Review screen's Confirm CTA,
 // but it's a POST, so the api-layer GET dedupe/micro-cache never warms it. We
@@ -188,7 +199,7 @@ export const bookingService = {
 
   cancelBooking(id: string, reason?: string) {
     const p = api.post(`/bookings/${id}/cancel`, { reason });
-    p.then(() => invalidateBookingsCaches(id)).catch(() => {});
+    p.then(() => invalidateAfterCancel(id)).catch(() => {});
     return p;
   },
 

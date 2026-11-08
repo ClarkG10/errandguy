@@ -61,19 +61,28 @@ export function itemsCashDue(
  * The one line telling the customer what cash to have ready for the items:
  * the exact amount once the runner has bought them, the budget as a ceiling
  * before that. Null when there is neither (not a shopping errand).
+ *
+ * `fareDue` is the fare when it is ALSO paid in cash at the door (a cash
+ * errand). The runner is told to collect both as one figure ("Collect ₱604.17
+ * (₱116.67 fare + ₱487.50 you fronted)"), so the customer is told the same
+ * total — two separate lines left them adding it up at the door. Same wording
+ * as the server's "have cash ready" notice.
  */
 export function itemsCashReadyLine(
   booking: Pick<Booking, 'actual_item_cost' | 'shopping_budget'> &
     Partial<Pick<Booking, 'items_cash_due'>>,
+  fareDue = 0,
 ): string | null {
+  const fare = Number.isFinite(fareDue) && fareDue > 0 ? fareDue : 0;
+  const plusFare = (items: string) =>
+    fare > 0 ? ` (${items} for the items + ${formatCurrency(fare)} fare)` : ' for the items';
   const due = itemsCashDue(booking);
   if (due != null) {
-    return due > 0
-      ? `Have ${formatCurrency(due)} cash ready for the items`
-      : 'No cash needed for the items';
+    if (due > 0) return `Have ${formatCurrency(due + fare)} cash ready${plusFare(formatCurrency(due))}`;
+    return fare > 0 ? `Have ${formatCurrency(fare)} cash ready for the fare` : 'No cash needed for the items';
   }
   const budget = positive(booking.shopping_budget);
   return budget != null && budget > 0
-    ? `Have up to ${formatCurrency(budget)} cash ready for the items`
+    ? `Have up to ${formatCurrency(budget + fare)} cash ready${plusFare(`up to ${formatCurrency(budget)}`)}`
     : null;
 }

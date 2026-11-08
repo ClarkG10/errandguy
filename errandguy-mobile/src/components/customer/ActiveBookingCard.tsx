@@ -75,10 +75,19 @@ const FILLED_SEGMENTS: Record<Phase, number> = {
 // use this guard to hide the whole "Your errand" section rather than mount a
 // broken card; a booking is only renderable if it has an id AND a status we
 // map to a real journey phase.
+//
+// Not `no_runner` either: the search is over, but the server still lists the
+// errand as active (it can be searched again until the matching deadline
+// closes it). Here it rendered as "Finding a runner" and counted as live,
+// while tracking and the staff panel call it ended.
 export function isRenderableActiveBooking(
   booking: Booking | null | undefined,
 ): booking is Booking {
-  return !!booking?.id && !!PHASE_BY_STATUS[booking.status as BookingStatus];
+  return (
+    !!booking?.id &&
+    booking.status !== 'no_runner' &&
+    !!PHASE_BY_STATUS[booking.status as BookingStatus]
+  );
 }
 
 // Short word under the bar naming the current stage. The "step N of 4"

@@ -512,7 +512,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const currentUser = get().user;
     if (currentUser) {
       const merged = { ...currentUser, ...data };
-      set({ user: merged });
+      // `role` is kept twice (user.role and the top-level role every navigator
+      // gate reads); a role written here must land in both, or a new runner
+      // is sent back to the customer tabs.
+      set(data.role ? { user: merged, role: data.role } : { user: merged });
       // Keep the boot snapshot in step with an in-app name / avatar edit so the
       // next cold start doesn't paint the old one for a beat.
       void persistUserSnapshot(merged);

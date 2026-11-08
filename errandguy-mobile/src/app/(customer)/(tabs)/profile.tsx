@@ -60,6 +60,7 @@ import { haptics } from '../../../utils/haptics';
 import { checkForOtaUpdate } from '../../../hooks/useOtaUpdate';
 import { useHideTabBarOnScroll } from '../../../hooks/useHideTabBarOnScroll';
 import { getAppVersionLabel } from '../../../utils/appVersion';
+import { isRenderableActiveBooking } from '../../../components/customer/ActiveBookingCard';
 
 interface MenuItem {
   label: string;
@@ -163,9 +164,12 @@ export default function CustomerProfileScreen() {
   // An errand in flight blocks the switch: the runner navigator has no
   // tracking screen for a customer's own booking, so switching mid-errand
   // hides a live errand from the person who is paying for it.
+  // An errand no runner took is over (it only waits out its matching window
+  // to be searched again), so it doesn't hold the switch or read as "in
+  // progress" — the same rule Home's cards use.
   const liveErrandCount = Math.max(
-    activeBooking ? 1 : 0,
-    (activeListQ.data ?? []).length,
+    isRenderableActiveBooking(activeBooking) ? 1 : 0,
+    (activeListQ.data ?? []).filter(isRenderableActiveBooking).length,
   );
   const isRunnerAlready = !!user?.runner_profile;
 

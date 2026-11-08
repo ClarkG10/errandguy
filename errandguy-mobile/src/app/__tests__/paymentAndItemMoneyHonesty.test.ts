@@ -185,7 +185,12 @@ describe('shopping item money is cash at the door', () => {
 
   it('tracking tells the customer what cash to have ready, above the fold', () => {
     expect(TRACKING).toMatch(
-      /const cashReadyLine = isShopping && itemsDue !== 0 \? itemsCashReadyLine\(booking\) : null/,
+      /const cashReadyLine =\s*isShopping && itemsDue !== 0 \? itemsCashReadyLine\(booking, fareCashAtDoor\) : null/,
+    );
+    // On a cash errand the fare is handed over at the same door, so the line
+    // names the one total the runner is told to collect.
+    expect(TRACKING).toMatch(
+      /const fareCashAtDoor =\s*booking\.payment_method === 'cash' && !isTerminalUi \? Number\(booking\.total_amount\) \|\| 0 : 0;/,
     );
     const body = TRACKING.slice(TRACKING.indexOf('When the numeral owns the handle'));
     const cash = body.indexOf('{itemsCashSection}');

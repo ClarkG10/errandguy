@@ -55,7 +55,7 @@ import { useBookingStore } from '../../../stores/bookingStore';
 import { useChatStore } from '../../../stores/chatStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { useLocationStore } from '../../../stores/locationStore';
-import { bookingService } from '../../../services/booking.service';
+import { bookingService, invalidateAfterCancel } from '../../../services/booking.service';
 // The panic button is durable now: the raise is persisted and retried by
 // sosIntent until the server ACKs, so this screen only presents that state.
 import {
@@ -1482,6 +1482,7 @@ export default function TrackingScreen() {
         return r?.data?.data as Booking | undefined;
       });
       if (landed) {
+        invalidateAfterCancel(id);
         setActiveBooking(null);
         setShowCancelModal(false);
         router.replace('/(customer)/(tabs)');
@@ -2074,7 +2075,16 @@ export default function TrackingScreen() {
   // customer checks at the door.
   const runnerVerified = isRunnerVerified(booking.runner);
   const runnerVehicle = runnerVehicleLine(booking.runner);
-  const runnerCard = booking.runner_id ? (
+  // A runner who was only OFFERED the errand isn't the customer's runner yet:
+  // runner_id is set at the offer, so while it waited (and after a cancel
+  // before anyone accepted) this showed an "On the way" card with Call and
+  // Message for a "?" nobody, and "Report this person" with no person. An
+  // older row without accepted_at still counts once it is past matching.
+  const runnerTookIt =
+    !!booking.runner_id &&
+    (!!booking.accepted_at ||
+      !['pending', 'matched', 'no_runner', 'cancelled'].includes(booking.status));
+  const runnerCard = runnerTookIt ? (
     <View className="bg-surface rounded-3xl p-4 mb-3" style={Elevation.sm}>
       <View className="flex-row items-center">
         <Avatar
@@ -2265,7 +2275,12 @@ export default function TrackingScreen() {
   // runner has bought the items, the budget as a ceiling before that.
   const itemsDue = isShopping ? itemsCashDue(booking) : null;
   // A ₱0 receipt (nothing could be bought) leaves no cash to prepare.
-  const cashReadyLine = isShopping && itemsDue !== 0 ? itemsCashReadyLine(booking) : null;
+  // A cash errand's fare is handed over at the same door, so the line names
+  // the one total the runner is told to collect (fare + items).
+  const fareCashAtDoor =
+    booking.payment_method === 'cash' && !isTerminalUi ? Number(booking.total_amount) || 0 : 0;
+  const cashReadyLine =
+    isShopping && itemsDue !== 0 ? itemsCashReadyLine(booking, fareCashAtDoor) : null;
   // Kept above the collapsed trip details while the errand runs, in the same
   // gold cash strip the runner sees for their side of the same handover —
   // finding out at the door that you need ₱1,200 in cash is too late.
@@ -2358,7 +2373,11 @@ export default function TrackingScreen() {
   const shoppingProgressSection =
     !isTerminalUi && hasShoppingItems ? (
       <View className="mt-3">
-        <ShoppingProgressCard items={booking.shopping_items} live />
+        <ShoppingProgressCard
+          items={booking.shopping_items}
+          live
+          receiptIn={!!booking.receipt_photo_url || itemsDue != null}
+        />
       </View>
     ) : null;
 
@@ -2711,7 +2730,7 @@ export default function TrackingScreen() {
           Report a problem
         </Text>
       </Pressable>
-      {booking.runner_id ? (
+      {runnerTookIt ? (
         <Pressable
           onPress={() => {
             haptics.selection();
