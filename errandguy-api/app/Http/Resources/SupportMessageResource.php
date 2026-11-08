@@ -14,7 +14,10 @@ class SupportMessageResource extends JsonResource
             'ticket_id' => $this->ticket_id,
             'sender_id' => $this->sender_id,
             'sender_type' => $this->sender_type,
-            'sender' => $this->whenLoaded('sender', fn () => $this->sender ? [
+            // Only a 'user' message's sender_id is a users id; a staff reply holds
+            // an admin_users id, so it has no customer-side name (the app shows
+            // "Support").
+            'sender' => $this->whenLoaded('sender', fn () => $this->sender_type === 'user' && $this->sender ? [
                 'id' => $this->sender->id,
                 'full_name' => $this->sender->full_name,
                 'avatar_url' => $this->sender->avatar_url,

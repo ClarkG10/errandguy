@@ -4,12 +4,14 @@ namespace Tests\Feature\Admin;
 
 use App\Filament\Resources\SupportTickets\Pages\ViewSupportTicket;
 use App\Filament\Resources\SupportTickets\RelationManagers\MessagesRelationManager;
+use App\Jobs\SendPushJob;
 use App\Models\AdminUser;
 use App\Models\SupportMessage;
 use App\Models\SupportTicket;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -140,23 +142,47 @@ class AdminTicketDecisionsTest extends TestCase
     }
 
     /**
-     * Seeds an AGENT reply.
-     *
-     * The shadow users row is NOT decoration: support_messages.sender_id carries
-     * a foreign key to users(id) while an agent reply stores an admin_users id
-     * (MessagesRelationManager), so today a real agent reply cannot be inserted
-     * at all — a schema bug reported alongside this work, whose fix is a
-     * migration and therefore out of scope here. Writing a users row under the
-     * same uuid is the only way to seed the row the panel intends to write; it
-     * stays harmless once the constraint is corrected.
+     * A staff member answers from the panel and the customer can read it. This
+     * failed on every reply until 2026-11-08: support_messages.sender_id had a
+     * foreign key to users, while a staff reply stores an admin_users id.
      */
+    public function test_staff_can_reply_and_the_customer_reads_it_as_support(): void
+    {
+        Queue::fake();
+        $agent = $this->admin('support', 'Carlos Agent');
+        $this->actingAs($agent, 'admin');
+        $user = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $ticket = $this->ticket($user, 'Where is my refund', 'open');
+        $this->message($ticket, 'user', $user->id, 'Hello?', now()->subHour());
+
+        Livewire::test(MessagesRelationManager::class, [
+            'ownerRecord' => $ticket,
+            'pageClass' => ViewSupportTicket::class,
+        ])
+            ->callTableAction('reply', data: ['content' => 'Your refund went out today.'])
+            ->assertHasNoTableActionErrors();
+
+        $reply = SupportMessage::where('ticket_id', $ticket->id)->where('sender_type', 'agent')->firstOrFail();
+        $this->assertSame($agent->id, $reply->sender_id);
+        $this->assertFalse(User::whereKey($agent->id)->exists(), 'no shadow users row was needed');
+        $this->assertSame('pending', $ticket->fresh()->status);
+        Queue::assertPushed(SendPushJob::class);
+
+        // The customer's thread shows the reply, from "Support" — never a
+        // customer's name.
+        $messages = $this->actingAs($user, 'sanctum')
+            ->getJson("/api/v1/support/tickets/{$ticket->id}")
+            ->assertOk()
+            ->json('data.messages');
+        $fromStaff = collect($messages)->firstWhere('sender_type', 'agent');
+        $this->assertSame('Your refund went out today.', $fromStaff['content']);
+        $this->assertNull($fromStaff['sender'] ?? null);
+    }
+
+    /** Seeds an AGENT reply: sender_id holds the staff member's admin_users id. */
     private function agentMessage(SupportTicket $ticket, string $body, $at, ?string $adminId = null): void
     {
         $adminId ??= $this->admin('support', 'Some Agent')->id;
-
-        if (! User::whereKey($adminId)->exists()) {
-            User::factory()->create(['id' => $adminId, 'role' => 'customer', 'status' => 'active']);
-        }
 
         $this->message($ticket, 'agent', $adminId, $body, $at);
     }
