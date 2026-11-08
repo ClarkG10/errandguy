@@ -1977,23 +1977,10 @@ export default function TrackingScreen() {
     : [121.0, 14.6]; // Manila default
 
   // ── Presentation-only derivations ────────────────────────────────────
-  // Accent rungs keyed off heroCopy.accent. Base tones for washes; *Dark
-  // rungs for text below ~17px (base tones sit under the 4.5:1 AA floor on
-  // white and on their own soft washes).
+  // Accent rung keyed off heroCopy.accent, for the small eyebrow text (the
+  // base tones sit under the 4.5:1 AA floor on white).
   const accentText = {
     brand: LightColors.primary,
-    success: LightColors.successDark,
-    danger: LightColors.dangerDark,
-    warning: LightColors.warningDark,
-  }[heroCopy.accent];
-  const accentBase = {
-    brand: LightColors.primary,
-    success: LightColors.success,
-    danger: LightColors.danger,
-    warning: LightColors.warning,
-  }[heroCopy.accent];
-  const accentDark = {
-    brand: LightColors.primaryDark,
     success: LightColors.successDark,
     danger: LightColors.dangerDark,
     warning: LightColors.warningDark,
@@ -2144,18 +2131,8 @@ export default function TrackingScreen() {
             </Text>
           ) : null}
         </View>
-        {/* Phase chip is live-only — "In transit" on a finished receipt lies. */}
-        {!isTerminalUi && (
-          <View className="rounded-full px-3 py-1.5" style={{ backgroundColor: LightColors.surfaceMuted }}>
-            <Text
-              className="text-[11px] font-montserrat-bold uppercase"
-              style={{ color: LightColors.primary700, letterSpacing: 0.8 }}
-              maxFontSizeMultiplier={1.3}
-            >
-              {isPickupPhase ? 'On the way' : 'In transit'}
-            </Text>
-          </View>
-        )}
+        {/* No phase chip: the hero above already names the step, and the
+            chip said "On the way" after the runner had arrived. */}
       </View>
 
       <View className="h-px bg-divider my-3.5" />
@@ -2444,7 +2421,7 @@ export default function TrackingScreen() {
                   <Text className="text-sm font-montserrat text-textSecondary">
                     Your budget
                   </Text>
-                  <Text className="text-sm font-montserrat-bold text-textPrimary">
+                  <Text className="text-sm font-montserrat-bold tabular-nums text-textPrimary">
                     {formatCurrency(booking.shopping_budget)}
                   </Text>
                 </View>
@@ -2453,7 +2430,7 @@ export default function TrackingScreen() {
                     <Text className="text-sm font-montserrat text-textSecondary">
                       Receipt amount
                     </Text>
-                    <Text className="text-sm font-montserrat-bold text-textPrimary">
+                    <Text className="text-sm font-montserrat-bold tabular-nums text-textPrimary">
                       {formatCurrency(itemsDue)}
                     </Text>
                   </View>
@@ -3374,39 +3351,24 @@ export default function TrackingScreen() {
                   </Text>
                 )}
               </View>
-              {(heroEtaLabel || booking.runner_id) ? (
-                <View className="flex-row items-center" style={{ gap: 8 }}>
-                  {heroEtaLabel && (
-                    <View
-                      className="rounded-full px-3.5 py-1.5"
-                      style={{ backgroundColor: `${accentBase}1A` }}
-                    >
-                      <Text
-                        className="text-[12px] font-montserrat-bold"
-                        style={{ color: accentDark }}
-                        maxFontSizeMultiplier={1.3}
-                      >
-                        {heroEtaLabel}
-                      </Text>
-                    </View>
-                  )}
-                  {booking.runner_id ? (
-                    <View className="items-center" style={{ maxWidth: 72 }}>
-                      <Avatar
-                        size="md"
-                        uri={booking.runner?.avatar_url ?? undefined}
-                        name={booking.runner?.full_name}
-                        isVerified={runnerVerified}
-                      />
-                      <Text
-                        className="text-[12px] font-montserrat-semi text-textSecondary mt-0.5"
-                        numberOfLines={1}
-                        maxFontSizeMultiplier={1.3}
-                      >
-                        {booking.runner?.full_name?.split(' ')[0] ?? 'Runner'}
-                      </Text>
-                    </View>
-                  ) : null}
+              {/* No "Here" / "Done" / "Ended" pill beside the title: it only
+                  repeated it ("Arrived · Here", "Delivered · Done"). The
+                  spoken label above still says it once. */}
+              {runnerTookIt ? (
+                <View className="items-center" style={{ maxWidth: 72 }}>
+                  <Avatar
+                    size="md"
+                    uri={booking.runner?.avatar_url ?? undefined}
+                    name={booking.runner?.full_name}
+                    isVerified={runnerVerified}
+                  />
+                  <Text
+                    className="text-[12px] font-montserrat-semi text-textSecondary mt-0.5"
+                    numberOfLines={1}
+                    maxFontSizeMultiplier={1.3}
+                  >
+                    {booking.runner?.full_name?.split(' ')[0] ?? 'Runner'}
+                  </Text>
                 </View>
               ) : null}
             </View>
@@ -3423,18 +3385,9 @@ export default function TrackingScreen() {
                 />
               </View>
             ) : null}
-            {booking.runner_id && !isTerminalUi ? (
-              <View className="flex-row items-center justify-end -mt-1 mb-1">
-                <View className={`w-1.5 h-1.5 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-textMuted'}`} />
-                <Text
-                  className="text-[11px] font-montserrat text-textTertiary uppercase"
-                  style={{ letterSpacing: 1 }}
-                  maxFontSizeMultiplier={1.3}
-                >
-                  {isConnected ? 'Live' : 'Reconnecting'}
-                </Text>
-              </View>
-            ) : null}
+            {/* Connection state is said once, on the status pill over the
+                map ("· Connecting…"); a second LIVE / RECONNECTING row here
+                repeated it. */}
           </View>
           )
         }

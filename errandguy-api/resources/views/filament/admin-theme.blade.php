@@ -122,6 +122,10 @@
 
     /* ===== TABLES ======================================================== */
     .fi-ta-header-cell { text-transform: uppercase; letter-spacing: .04em; font-size: .68rem; font-weight: 700; opacity: .7; }
+    /* A sortable header's label sits in a <button>, which Tailwind's reset sets
+       back to text-transform:none: "Booking number" sat beside "CUSTOMER" in the
+       same row. Inherit, so every header reads the same. */
+    .fi-ta-header-cell button { text-transform: inherit; letter-spacing: inherit; font-size: inherit; font-weight: inherit; }
     .fi-ta-header-cell, .fi-ta-cell { padding-top: var(--eg-s3) !important; padding-bottom: var(--eg-s3) !important; }
     .fi-ta-cell { vertical-align: middle; }
     .fi-ta-row { transition: background .12s ease; }

@@ -164,12 +164,26 @@ describe('earnings — cash out stays reachable', () => {
     const list = screen.UNSAFE_getByType(SectionList);
     const header = render(<View>{list.props.ListHeaderComponent}</View>);
     expect(header.getByText('Available now')).toBeTruthy();
-    expect(header.getByText('Request payout')).toBeTruthy();
+    // ₱0 is under the minimum: the button leads to the payout history and
+    // doesn't promise a payout that can't be asked for.
+    expect(header.getByText('Payout history')).toBeTruthy();
+    expect(header.queryByText('Request payout')).toBeNull();
     expect(header.getByText('Export CSV')).toBeTruthy();
 
     const footer = render(<View>{list.props.ListFooterComponent}</View>);
-    expect(footer.queryByText('Request payout')).toBeNull();
+    expect(footer.queryByText('Payout history')).toBeNull();
     expect(footer.queryByText('Export CSV')).toBeNull();
+  });
+
+  it('offers "Request payout" once the balance reaches the minimum', async () => {
+    useAuthStore.setState({ user: { id: 'r1', role: 'runner', wallet_balance: 5000 } as unknown as User });
+    svc.getEarningsHistory.mockResolvedValue(ok(rows('t', 0, 30)));
+    const screen = wrap(<EarningsScreen />);
+    await waitFor(() => expect(screen.UNSAFE_getByType(SectionList)).toBeTruthy());
+
+    const header = render(<View>{screen.UNSAFE_getByType(SectionList).props.ListHeaderComponent}</View>);
+    expect(header.getByText('Request payout')).toBeTruthy();
+    expect(header.queryByText('Payout history')).toBeNull();
   });
 });
 

@@ -560,7 +560,7 @@ export default function CustomerProfileScreen() {
             accessibilityLabel="Open wallet"
           >
             <Eyebrow>Wallet balance</Eyebrow>
-            <Text className="text-[24px] font-inter-semi text-textPrimary mt-1" style={{ lineHeight: 26, letterSpacing: -0.3 }}>
+            <Text className="text-[24px] font-inter-semi tabular-nums text-textPrimary mt-1" style={{ lineHeight: 26, letterSpacing: -0.3 }}>
               {formatCurrency(user?.wallet_balance ?? 0)}
             </Text>
           </Pressable>

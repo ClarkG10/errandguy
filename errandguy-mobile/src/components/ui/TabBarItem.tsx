@@ -1,12 +1,14 @@
 import React from 'react';
 import { View, Text, StyleSheet, Platform, type TextStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Bell, History, House, List, User, Wallet, type LucideIcon } from 'lucide-react-native';
 import { useResponsive } from '../../constants/responsive';
 import { LightColors } from '../../constants/colors';
 import { CHROME_MAX_FONT_SCALE } from '../../constants/fontScale';
 
-/** Base Ionicons names used by the tab bars. The `-outline` variant is
- *  rendered when inactive; the solid (base) glyph when active. */
+/** The tab bars' icons, by role. Drawn with Lucide, the icon set every other
+ *  screen uses: the bars were the one place on Ionicons, so their glyphs
+ *  (filled/outline, a different stroke and corner style) didn't match the
+ *  icons on the screens above them. */
 export type TabIconName =
   | 'home'
   | 'list'
@@ -15,8 +17,16 @@ export type TabIconName =
   | 'wallet'
   | 'time';
 
+const ICONS: Record<TabIconName, LucideIcon> = {
+  home: House,
+  list: List,
+  notifications: Bell,
+  person: User,
+  wallet: Wallet,
+  time: History,
+};
+
 interface TabBarItemProps {
-  /** Base Ionicons name (without the `-outline` suffix). */
   name: TabIconName;
   focused: boolean;
   badgeCount?: number;
@@ -24,7 +34,7 @@ interface TabBarItemProps {
 }
 
 const ACTIVE = LightColors.primary;
-// textTertiary (#64748B ~5.2:1 on white) clears the 3:1 non-text glyph
+// textTertiary (#617088 ~5.0:1 on white) clears the 3:1 non-text glyph
 // floor that textMuted (#94A3B8 ~2.57:1) failed — inactive icons must
 // stay legible in outdoor sunlight while still reading subordinate to
 // the brand-blue active glyph.
@@ -33,8 +43,9 @@ const INACTIVE = LightColors.textTertiary;
 /**
  * The icon of a tab-bar entry; the navigator draws the text label under it.
  *
- * Active state is shown by the icon: a solid (filled) glyph in brand blue
- * when focused, the outline variant in muted slate when not. No active dot.
+ * Active state is shown by the icon: brand blue with a heavier stroke when
+ * focused, slate with the standard stroke when not (Lucide has no filled
+ * variants). The label under it changes colour too. No active dot.
  * The notification badge and runner online dot stay because they carry
  * information, not selection state.
  */
@@ -46,9 +57,7 @@ export function TabBarItem({
 }: TabBarItemProps) {
   const { mScale } = useResponsive();
   const color = focused ? ACTIVE : INACTIVE;
-  const iconName = (focused ? name : `${name}-outline`) as React.ComponentProps<
-    typeof Ionicons
-  >['name'];
+  const Icon = ICONS[name];
 
   const slot = mScale(48);
   const iconSize = mScale(22);
@@ -64,7 +73,7 @@ export function TabBarItem({
   return (
     <View style={[s.wrap, { width: slot }]}>
       <View style={s.iconBox} pointerEvents="none">
-        <Ionicons name={iconName} size={iconSize} color={color} />
+        <Icon size={iconSize} color={color} strokeWidth={focused ? 2.4 : 1.9} />
         {!!badgeCount && badgeCount > 0 && (
           <View
             style={[

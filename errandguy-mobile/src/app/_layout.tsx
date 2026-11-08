@@ -7,7 +7,6 @@ import { GoogleSans_500Medium } from '@expo-google-fonts/google-sans/500Medium';
 import { GoogleSans_600SemiBold } from '@expo-google-fonts/google-sans/600SemiBold';
 import { GoogleSans_700Bold } from '@expo-google-fonts/google-sans/700Bold';
 import { Montserrat_300Light } from '@expo-google-fonts/montserrat/300Light';
-import { Ionicons } from '@expo/vector-icons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
@@ -138,9 +137,6 @@ export default function RootLayout() {
     Inter_500Medium: GoogleSans_500Medium,
     Inter_600SemiBold: GoogleSans_600SemiBold,
     Inter_700Bold: GoogleSans_700Bold,
-    // Preload the Ionicons glyph font used by the tab bars so the icons
-    // paint on first render instead of flashing in a frame later.
-    ...Ionicons.font,
   });
 
   // Use individual selectors to avoid re-rendering the whole tree (and

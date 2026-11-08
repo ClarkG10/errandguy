@@ -56,7 +56,10 @@ export const LightColors = {
   ink: '#0B1220',
   textPrimary: '#0F172A',
   textSecondary: '#475569',
-  textTertiary: '#64748B',
+  // #617088, not slate-500 #64748B: that sat at 4.48:1 on the page
+  // background, a hair under WCAG AA; this clears 4.5:1 on background,
+  // surface and surfaceMuted.
+  textTertiary: '#617088',
   textMuted: '#94A3B8',
   textInverse: '#FFFFFF',
 

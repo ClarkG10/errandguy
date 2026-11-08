@@ -623,7 +623,7 @@ export default function EarningsScreen() {
                     {earningsData?.total_errands ?? 0}
                   </Text>
                   <Text className="text-[13px] font-montserrat text-white/90 ml-1">
-                    errands
+                    {(earningsData?.total_errands ?? 0) === 1 ? 'errand' : 'errands'}
                   </Text>
                   <Text className="text-[13px] font-montserrat text-white/50 mx-2">·</Text>
                   <Text className="text-[13px] font-montserrat text-white/90">Avg</Text>
@@ -780,19 +780,20 @@ export default function EarningsScreen() {
               <Card padding="md">
                 <View className="flex-row items-start">
                   <View className="flex-1 pr-3">
-                    <Eyebrow>{balance < 0 ? 'Owed from cash errands' : 'Available now'}</Eyebrow>
+                    <Eyebrow>{balance < 0 ? 'You owe' : 'Available now'}</Eyebrow>
                     <Text
                       className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
                       numberOfLines={1}
                       adjustsFontSizeToFit
                       minimumFontScale={0.7}
                     >
-                      {balance < 0 ? '−' : ''}
+                      {/* The label already says "You owe": a minus here read as
+                          a double negative ("You owe −₱6.76"). */}
                       {formatCurrency(Math.abs(balance))}
                     </Text>
                     <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5">
                       {balance < 0
-                        ? 'Cleared automatically from your next prepaid earnings'
+                        ? 'Platform fees from cash errands — cleared from your next online earnings'
                         : balance < minPayout
                           ? `Min ${formatCurrency(minPayout)} to cash out`
                           : 'Ready to withdraw'}
@@ -802,7 +803,7 @@ export default function EarningsScreen() {
                     className="flex-1 pl-3"
                     style={{ borderLeftWidth: 1, borderLeftColor: LightColors.divider }}
                   >
-                    <Eyebrow>Payout in flight</Eyebrow>
+                    <Eyebrow>Payout pending</Eyebrow>
                     <Text
                       className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
                       numberOfLines={1}
@@ -832,9 +833,18 @@ export default function EarningsScreen() {
 
             {/* Payout Button */}
             <View className="px-5 mb-4">
+              {/* The screen's main button only when a payout can actually be
+                  asked for; below the minimum (or owing) it's a way to the
+                  payout history, styled as one. */}
               <Button
-                title={pendingPayout ? 'View payout status' : 'Request payout'}
-                variant="primary"
+                title={
+                  pendingPayout
+                    ? 'View payout status'
+                    : balance >= minPayout
+                      ? 'Request payout'
+                      : 'Payout history'
+                }
+                variant={pendingPayout || balance >= minPayout ? 'primary' : 'secondary'}
                 size="lg"
                 onPress={() => {
                   // The payout list is warmed at boot; the wallet-activity preview
@@ -867,7 +877,7 @@ export default function EarningsScreen() {
                 <View className="flex-1">
                   <Button
                     title="Download PDF"
-                    variant="ghost"
+                    variant="secondary"
                     icon={FileText}
                     onPress={handleDownloadPdf}
                     loading={exporting === 'pdf'}

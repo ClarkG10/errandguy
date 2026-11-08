@@ -34,10 +34,12 @@ import { useReducedMotion } from '../../hooks/useReducedMotion';
  *   - 3-slide content
  *   - Light selection haptic on skip and next
  */
+// No eyebrows ("WHAT IT DOES", "HOW IT WORKS"): they labelled what each
+// title already says. Titles name the thing itself, not a category
+// ("Watch your runner, live", not "Real-time tracking").
 const slides = [
   {
     id: '1',
-    eyebrow: 'WHAT IT DOES',
     title: 'Book any errand',
     // The four errand types the app actually offers, by the names the
     // booking screen uses.
@@ -47,18 +49,16 @@ const slides = [
   },
   {
     id: '2',
-    eyebrow: 'HOW IT WORKS',
-    title: 'Real-time tracking',
+    title: 'Watch your runner, live',
     description:
-      'Watch your runner move on a live map, every step of the way. No guessing, no waiting in the dark.',
+      'See them on the map at every step, from pickup to your door. No guessing, no waiting in the dark.',
     image: 'onboarding-track' as const,
   },
   {
     id: '3',
-    eyebrow: 'WHY YOU CAN TRUST IT',
-    title: 'Safe & secure',
+    title: 'Verified runners, fixed prices',
     description:
-      'Verified runners, fixed prices, an SOS button that reaches our safety team, and trip sharing — every errand has your back.',
+      'Every runner is ID-checked, and you see the full price before you book. An SOS button reaches our safety team, and you can share the trip.',
     image: 'onboarding-safety' as const,
   },
 ];
@@ -138,7 +138,6 @@ export default function WelcomeScreen() {
           renderItem={({ item, index }) => (
             <OnboardingSlide
               illustration={<Illustration name={item.image} size={heroSize} />}
-              eyebrow={item.eyebrow}
               title={item.title}
               description={item.description}
               active={index === activeIndex}

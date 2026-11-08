@@ -58,8 +58,8 @@ module.exports = {
         textPrimary: '#0F172A',
         'text-secondary': '#475569',
         textSecondary: '#475569',
-        'text-tertiary': '#64748B',
-        textTertiary: '#64748B',
+        'text-tertiary': '#617088',
+        textTertiary: '#617088',
         textMuted: '#94A3B8',
         textInverse: '#FFFFFF',
 

@@ -428,8 +428,8 @@ export default function TaskDetailsScreen() {
     return { fromAmount, km, eta };
   }, [estimate, rule.allowedVehicles, rule.defaultVehicle]);
 
-  // The map step's title, in the floating header and on the card: "Set
-  // pickup", "Set drop-off", or the type's own wording ("Which store?").
+  // The map step's title, in the floating header: "Set pickup", "Set
+  // drop-off", or the type's own wording ("Which store?").
   const locationStepTitle =
     phase === 'pickup'
       ? rule.pickupStepCopy?.title ?? `Set ${rule.pickupLabel.toLowerCase()}`
@@ -2179,7 +2179,9 @@ export default function TaskDetailsScreen() {
             alignSelf: 'center',
           }}
         >
-          <Text style={st.cardTitle}>{locationStepTitle}</Text>
+          {/* The field's name ("Pickup", "Store"), not the step title again:
+              the floating header above already says "Set pickup". */}
+          <Text style={st.cardTitle}>{phase === 'pickup' ? rule.pickupLabel : rule.dropoffLabel}</Text>
 
           <View style={st.addressRow}>
             <View style={[st.addressDot, { backgroundColor: pinColor + '18' }]}>

@@ -593,7 +593,7 @@ export default function ChatScreen() {
       if (isSystem) {
         return (
           <View className="items-center my-2 px-4">
-            <Text className="text-xs font-montserrat italic text-textSecondary text-center">
+            <Text className="text-xs font-montserrat text-textSecondary text-center">
               {m.content}
             </Text>
           </View>

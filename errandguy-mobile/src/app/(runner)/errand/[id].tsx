@@ -2710,7 +2710,9 @@ export default function ActiveErrandScreen() {
                         eyebrow={isReadOnly ? undefined : inPickupPhase ? 'PICKUP' : 'DROP-OFF'}
                         title={runnerHeroTitle}
                         subtitle={heroSubtitle}
-                        etaMinutes={etaMin != null ? Math.max(1, Math.round(etaMin)) : null}
+                        // No ETA pill: the map already shows "1 min away", and
+                        // the two read side by side. It is still spoken (the
+                        // header label above).
                         accent={booking.status === 'cancelled' ? 'danger' : 'brand'}
                       />
                     </View>

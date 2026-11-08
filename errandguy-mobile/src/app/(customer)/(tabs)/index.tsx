@@ -1234,8 +1234,10 @@ export default function CustomerHomeScreen() {
         {(featuredTypes.length > 0 || errandTypesQ.error) && (
           <View className="mt-7 px-5">
             <View className="flex-row items-baseline justify-between mb-3">
-              <Text className="text-[15px] font-montserrat-bold text-textPrimary">
-                What can we help with?
+              {/* Not "What can we help with?": the entry card above already
+                  asks "What can we help you with today?". */}
+              <Text className="text-[15px] font-montserrat-bold text-textPrimary" accessibilityRole="header">
+                Book an errand
               </Text>
               {featuredTypes.length > 0 && (
                 <Pressable
@@ -1245,7 +1247,7 @@ export default function CustomerHomeScreen() {
                   accessibilityLabel="See all errand types"
                   style={({ pressed }) => pressed && { opacity: 0.5 }}
                 >
-                  <Text className="text-[11px] font-montserrat-bold text-primary underline">
+                  <Text className="text-[13px] font-montserrat-semi text-primary">
                     See all
                   </Text>
                 </Pressable>
@@ -1343,7 +1345,12 @@ export default function CustomerHomeScreen() {
         {recentBookings.length > 0 ? (
           <View className="px-5 mt-7">
             <View className="flex-row items-baseline justify-between mb-2">
-              <Eyebrow>Recent</Eyebrow>
+              {/* Same heading style as "Book an errand" above: one section
+                  heading style per screen, not a bold title and a spaced-caps
+                  eyebrow side by side. */}
+              <Text className="text-[15px] font-montserrat-bold text-textPrimary" accessibilityRole="header">
+                Recent errands
+              </Text>
               <Pressable
                 onPress={() => router.push('/(customer)/(tabs)/activity')}
                 hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
@@ -1351,7 +1358,7 @@ export default function CustomerHomeScreen() {
                 accessibilityLabel="See all errands"
                 style={({ pressed }) => pressed && { opacity: 0.5 }}
               >
-                <Text className="text-[11px] font-montserrat-bold text-primary underline">
+                <Text className="text-[13px] font-montserrat-semi text-primary">
                   See all
                 </Text>
               </Pressable>
@@ -1426,7 +1433,9 @@ export default function CustomerHomeScreen() {
           // Fetch failed and nothing cached — say so instead of the
           // section silently disappearing.
           <View className="px-5 mt-7">
-            <Eyebrow className="mb-2">Recent</Eyebrow>
+            <Text className="text-[15px] font-montserrat-bold text-textPrimary mb-2" accessibilityRole="header">
+              Recent errands
+            </Text>
             <ErrorState
               error={recentBookingsQ.error}
               compact
@@ -1440,7 +1449,9 @@ export default function CustomerHomeScreen() {
           // Genuinely empty (loaded fine, zero bookings) — guide the
           // first booking instead of hiding the section.
           <View className="px-5 mt-7">
-            <Eyebrow className="mb-2">Recent</Eyebrow>
+            <Text className="text-[15px] font-montserrat-bold text-textPrimary mb-2" accessibilityRole="header">
+              Recent errands
+            </Text>
             <Text className="text-[13px] font-montserrat text-textSecondary leading-5">
               Your errands will show up here.{'\n'}Book one and track everything
               from this screen.
@@ -1533,7 +1544,7 @@ function ScheduledErrandCard({
         >
           {booking.errand_type?.name ?? 'Errand'}
         </Text>
-        <Text className="text-[14px] font-inter-semi text-textPrimary">
+        <Text className="text-[14px] font-inter-semi tabular-nums text-textPrimary">
           {formatCurrency(booking.total_amount)}
         </Text>
       </View>

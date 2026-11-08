@@ -1114,6 +1114,10 @@ export default function RunnerHomeScreen() {
     ? 'Reconnecting your location…'
     : isOnline && dispatchStale
     ? 'Location paused — you go offline after 30 min without it'
+    // Online with location permission off: requests need a position, so
+    // "receiving requests" (said beside the Turn on location card) was untrue.
+    : isOnline && locationGranted === false
+    ? 'Online · turn on location to get requests'
     : isOnline
     ? 'You’re online · receiving requests'
     : locationGranted === false
@@ -1647,7 +1651,9 @@ export default function RunnerHomeScreen() {
                 Turn on location
               </Text>
               <Text className="text-[12px] font-montserrat text-textSecondary mt-0.5">
-                Without it you can&apos;t go online or get errands.
+                {isOnline
+                  ? 'Without it you won’t get errands, and you go offline after 30 minutes.'
+                  : 'Without it you can’t go online or get errands.'}
               </Text>
             </View>
             <Pressable

@@ -60,7 +60,12 @@ describe('the first shift after approval', () => {
 
   it('the location nudge says what is really at stake', () => {
     expect(HOME).not.toContain('Customers can&apos;t see you on the map without it.');
-    expect(HOME).toContain('Without it you can&apos;t go online or get errands.');
+    // Offline: what they can't do. Already online: what they're missing, and
+    // the 30-minute switch-off — "can't go online" was untrue for them.
+    expect(HOME).toContain('Without it you can’t go online or get errands.');
+    expect(HOME).toContain('Without it you won’t get errands, and you go offline after 30 minutes.');
+    // And the caption beside it no longer says "receiving requests".
+    expect(HOME).toContain("isOnline && locationGranted === false\n    ? 'Online · turn on location to get requests'");
   });
 
   it('warns before the cash-debt ceiling, not only after', () => {
