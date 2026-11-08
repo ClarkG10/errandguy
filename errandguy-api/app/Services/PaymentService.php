@@ -413,11 +413,26 @@ class PaymentService
             return;
         }
 
-        $booking = \App\Models\Booking::whereKey($bookingId)->lockForUpdate()->first(['id', 'status']);
+        $booking = \App\Models\Booking::whereKey($bookingId)->lockForUpdate()->first(['id', 'status', 'payment_status', 'cancellation_fee']);
         if ($booking && ! in_array($booking->status, \App\Enums\BookingStatus::ENDED, true)) {
             throw new \RuntimeException(
                 'This errand is still in progress, so its payment can’t be refunded here. '
                 .'Cancel the errand instead — cancelling refunds the customer.'
+            );
+        }
+
+        // The errand's money was already settled when it was cancelled. When
+        // the cancellation fee was the whole fare nothing came back, so the
+        // payment itself stayed "completed" — refunding it here would hand the
+        // customer the fare a second time, after the fee already went to the
+        // runner. A goodwill credit is a wallet adjustment, not a refund.
+        if ($booking && $booking->payment_status === 'refunded') {
+            throw new \RuntimeException(
+                'This errand’s money was already settled when it was cancelled'
+                .((float) $booking->cancellation_fee > 0
+                    ? ' (₱'.number_format((float) $booking->cancellation_fee, 2).' was kept as the cancellation fee and paid to the runner)'
+                    : '')
+                .'. To give the customer anything back, use a wallet adjustment on their page.'
             );
         }
     }

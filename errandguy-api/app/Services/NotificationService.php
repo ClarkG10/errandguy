@@ -242,6 +242,7 @@ class NotificationService
             }
 
             $this->pruneInvalidExpoTokens($tokens, $tickets);
+            $this->rememberTicketsForReceipts($tokens, $tickets);
         } catch (\Throwable $e) {
             Log::error('Expo push notification failed', [
                 'count' => count($tokens),
@@ -271,6 +272,33 @@ class NotificationService
 
         if (! empty($dead)) {
             \App\Models\DeviceToken::whereIn('token', $dead)->delete();
+        }
+    }
+
+    /**
+     * Keep each accepted ticket so errandguy:check-push-receipts can read its
+     * receipt later — where uninstalled apps and broken push credentials show
+     * up. Never fails the push it follows.
+     *
+     * @param  array<int,string>  $tokens
+     * @param  array<int,mixed>  $tickets
+     */
+    private function rememberTicketsForReceipts(array $tokens, array $tickets): void
+    {
+        $rows = [];
+        foreach ($tickets as $i => $ticket) {
+            if (is_array($ticket) && ($ticket['status'] ?? null) === 'ok' && filled($ticket['id'] ?? null) && isset($tokens[$i])) {
+                $rows[] = ['ticket_id' => (string) $ticket['id'], 'token' => $tokens[$i], 'created_at' => now()];
+            }
+        }
+        if ($rows === []) {
+            return;
+        }
+
+        try {
+            \App\Models\PushTicket::insertOrIgnore($rows);
+        } catch (\Throwable $e) {
+            Log::warning('Could not keep push tickets for their receipts', ['error' => $e->getMessage()]);
         }
     }
 

@@ -243,6 +243,34 @@ class RefundSemanticsTest extends TestCase
         $this->assertSame('paid', $booking->fresh()->payment_status);
     }
 
+    public function test_money_kept_whole_as_a_cancellation_fee_is_never_refunded_again(): void
+    {
+        // A cancel whose fee was the whole fare returns nothing: the booking is
+        // settled ("refunded") but its payment stays "completed". Refunding that
+        // payment would pay the fare out a second time — the fee already went
+        // to the runner.
+        $booking = $this->bookViaWallet('cancelled');
+        $booking->update(['payment_status' => 'refunded', 'cancellation_fee' => $booking->total_amount]);
+        $payment = Payment::where('booking_id', $booking->id)->firstOrFail();
+        $balance = (float) $this->customer->fresh()->wallet_balance;
+        $this->actingAs(\App\Models\AdminUser::create([
+            'email' => 'finance@errandguy.test', 'password_hash' => 'x',
+            'full_name' => 'Finance', 'role' => 'finance', 'is_active' => true,
+        ]), 'admin');
+
+        \Livewire\Livewire::test(\App\Filament\Resources\Payments\Pages\ListPayments::class)
+            ->assertTableActionHidden('refund', $payment);
+
+        try {
+            app(PaymentService::class)->refundToWallet($payment->id, 'test');
+            $this->fail('A payment settled on cancellation was refunded again.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('already settled when it was cancelled', $e->getMessage());
+        }
+        $this->assertSame('completed', $payment->fresh()->status);
+        $this->assertEquals($balance, (float) $this->customer->fresh()->wallet_balance);
+    }
+
     public function test_a_completed_errand_refund_says_the_runner_keeps_their_pay_and_large_ones_alert(): void
     {
         $booking = $this->bookViaWallet('completed');

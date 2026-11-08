@@ -145,6 +145,9 @@ class PaymentsTable
             ->visible(fn ($record): bool => $record->status === 'completed'
                 && $record->method !== 'cash'
                 && ! ($record->booking && ! in_array($record->booking->status, \App\Enums\BookingStatus::ENDED, true))
+                // Settled on cancellation (a fee that was the whole fare
+                // leaves the payment "completed"): PaymentService refuses it.
+                && $record->booking?->payment_status !== 'refunded'
                 && (auth('admin')->user()?->canManageMoney() ?? false))
             ->modalDescription(fn ($record): string => ($record->method === 'card'
                     ? 'Full refund reversed to the original card via Xendit.'

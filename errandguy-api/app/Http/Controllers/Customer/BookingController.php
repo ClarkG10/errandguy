@@ -507,15 +507,20 @@ class BookingController extends Controller
             'item_photos.*' => ['image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
         ]);
 
-        $photos = $booking->item_photos ?? [];
+        $added = [];
         foreach ($request->file('item_photos') as $photo) {
-            $photos[] = \App\Http\Controllers\BookingMediaController::storeAndUrl(
+            $added[] = \App\Http\Controllers\BookingMediaController::storeAndUrl(
                 $photo,
                 'booking-photos/'.$booking->id,
             );
         }
-        // Cap the total at 5 to mirror the create-time limit.
-        $booking->update(['item_photos' => array_slice($photos, 0, 5)]);
+        // Appended to the list as it is NOW, under the row lock: two uploads
+        // at once each read the old list and the second dropped the first's
+        // photos. Cap the total at 5 to mirror the create-time limit.
+        \Illuminate\Support\Facades\DB::transaction(function () use ($booking, $added) {
+            $locked = Booking::whereKey($booking->id)->lockForUpdate()->first();
+            $locked->update(['item_photos' => array_slice([...($locked->item_photos ?? []), ...$added], 0, 5)]);
+        });
 
         return response()->json(['data' => new BookingResource($booking->fresh())]);
     }

@@ -173,6 +173,14 @@ Schedule::command('errandguy:send-scheduled-reminders')
     ->onOneServer()
     ->withoutOverlapping(10);
 
+// Push delivery receipts: a push ticket only says Expo accepted the message.
+// Uninstalled apps and broken FCM/APNs credentials (every push on a platform
+// failing, offers included) only show up in the receipts, ~15 minutes later.
+Schedule::command('errandguy:check-push-receipts')
+    ->everyFifteenMinutes()
+    ->onOneServer()
+    ->withoutOverlapping(10);
+
 // Money-safety backstop: cancel + refund prepaid bookings stranded past the
 // auto-cancel window when the DELAYED AutoCancelBookingJob never ran (worker
 // down, or a crash before it was dispatched), and cancel GCash/Maya errands

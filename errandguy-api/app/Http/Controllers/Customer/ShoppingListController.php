@@ -34,13 +34,7 @@ class ShoppingListController extends Controller
      */
     public function update(ShoppingItemsRequest $request, string $id): JsonResponse
     {
-        $booking = Booking::where('customer_id', $request->user()->id)->findOrFail($id);
-
-        if (! in_array($booking->status, self::EDITABLE_STATUSES, true)) {
-            return response()->json([
-                'message' => 'The shopping list can no longer be edited for this booking.',
-            ], 422);
-        }
+        Booking::where('customer_id', $request->user()->id)->findOrFail($id);
 
         $items = array_map(function (array $item) {
             return [
@@ -52,7 +46,24 @@ class ShoppingListController extends Controller
             ];
         }, $request->validated('items', []));
 
-        $booking->update(['shopping_items' => $items]);
+        // Under the errand's row lock, like the runner's ticks: the status is
+        // re-checked against a pickup landing at the same moment, and a tick
+        // can't write the old list back over this one.
+        $booking = \Illuminate\Support\Facades\DB::transaction(function () use ($id, $items) {
+            $booking = Booking::whereKey($id)->lockForUpdate()->firstOrFail();
+            if (! in_array($booking->status, self::EDITABLE_STATUSES, true)) {
+                return null;
+            }
+            $booking->update(['shopping_items' => $items]);
+
+            return $booking;
+        });
+
+        if ($booking === null) {
+            return response()->json([
+                'message' => 'The shopping list can no longer be edited for this booking.',
+            ], 422);
+        }
 
         $booking->load(['errandType', 'runner', 'customer', 'statusLogs']);
 

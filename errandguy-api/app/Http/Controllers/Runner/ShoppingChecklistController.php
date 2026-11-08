@@ -8,11 +8,15 @@ use App\Http\Resources\BookingResource;
 use App\Models\Booking;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ShoppingChecklistController extends Controller
 {
     /** Terminal statuses where a booking's checklist can no longer be ticked. */
     private const CLOSED_STATUSES = BookingStatus::FINALIZED;
+
+    /** Leaves room under Reverb's 10 KB message limit for the rest of the notification. */
+    private const LIVE_ITEMS_MAX_BYTES = 7000;
 
     /**
      * PATCH /runner/errand/{id}/shopping-items — tick items off the list.
@@ -33,27 +37,8 @@ class ShoppingChecklistController extends Controller
             'items.*.checked' => ['required', 'boolean'],
         ]);
 
-        $booking = Booking::findOrFail($id);
+        Booking::findOrFail($id);
         $user = $request->user();
-
-        if ($user->id !== $booking->runner_id) {
-            return response()->json([
-                'message' => 'You are not assigned to this errand.',
-            ], 403);
-        }
-
-        if (in_array($booking->status, self::CLOSED_STATUSES, true)) {
-            return response()->json([
-                'message' => 'This errand is closed — its shopping list can no longer be updated.',
-            ], 422);
-        }
-
-        $items = $booking->shopping_items ?? [];
-        if (empty($items)) {
-            return response()->json([
-                'message' => 'This booking has no shopping list to update.',
-            ], 422);
-        }
 
         // Index the requested checked-state changes by item id.
         $changes = [];
@@ -61,18 +46,47 @@ class ShoppingChecklistController extends Controller
             $changes[$change['id']] = (bool) $change['checked'];
         }
 
-        $now = now()->toIso8601String();
-        $items = array_map(function (array $item) use ($changes, $now) {
-            if (isset($item['id']) && array_key_exists($item['id'], $changes)) {
-                $checked = $changes[$item['id']];
-                $item['checked'] = $checked;
-                $item['checked_at'] = $checked ? $now : null;
+        // Read, change and write the list under the errand's row lock. The app
+        // sends one request per tick, so two quick ticks overlapped and the
+        // second write dropped the first; and a tick racing the customer's
+        // edit wrote the OLD list back over it. Checked again under the lock:
+        // the runner may have been taken off the errand meanwhile.
+        $outcome = DB::transaction(function () use ($id, $user, $changes) {
+            $booking = Booking::whereKey($id)->lockForUpdate()->firstOrFail();
+
+            if ($user->id !== $booking->runner_id) {
+                return [403, 'You are not assigned to this errand.'];
+            }
+            if (in_array($booking->status, self::CLOSED_STATUSES, true)) {
+                return [422, 'This errand is closed — its shopping list can no longer be updated.'];
             }
 
-            return $item;
-        }, $items);
+            $items = $booking->shopping_items ?? [];
+            if (empty($items)) {
+                return [422, 'This booking has no shopping list to update.'];
+            }
 
-        $booking->update(['shopping_items' => $items]);
+            $now = now()->toIso8601String();
+            $items = array_map(function (array $item) use ($changes, $now) {
+                if (isset($item['id']) && array_key_exists($item['id'], $changes)) {
+                    $checked = $changes[$item['id']];
+                    $item['checked'] = $checked;
+                    $item['checked_at'] = $checked ? $now : null;
+                }
+
+                return $item;
+            }, $items);
+
+            $booking->update(['shopping_items' => $items]);
+
+            return $booking;
+        });
+
+        if (is_array($outcome)) {
+            return response()->json(['message' => $outcome[1]], $outcome[0]);
+        }
+        $booking = $outcome;
+        $items = $booking->shopping_items;
 
         // Push the fresh list to the customer live so ticks land immediately —
         // but AFTER the response is flushed. The DB write above is the
@@ -85,7 +99,12 @@ class ShoppingChecklistController extends Controller
         // uses; values captured by value so the closure is request-independent.
         $customerId = $booking->customer_id;
         $bookingId = $booking->id;
-        dispatch(function () use ($customerId, $bookingId, $items) {
+        // The live message has a 10 KB ceiling (Reverb), and a long list of
+        // long names went past it, so every tick's broadcast failed. A list
+        // too big to carry is left out: the tracking screen keeps its last
+        // copy and its regular refresh picks the ticks up.
+        $liveItems = strlen((string) json_encode($items)) <= self::LIVE_ITEMS_MAX_BYTES ? $items : null;
+        dispatch(function () use ($customerId, $bookingId, $liveItems) {
             // COALESCED: one live card per errand, not one per tick. This runs on
             // every item tick, so notifyInApp dropped 40 identical rows into the
             // customer's inbox for a 40-item list and buried everything that
@@ -95,11 +114,11 @@ class ShoppingChecklistController extends Controller
                 $customerId,
                 'Shopping list updated',
                 'Your runner updated the shopping checklist.',
-                [
+                array_filter([
                     'type' => 'shopping_items_updated',
                     'booking_id' => $bookingId,
-                    'shopping_items' => $items,
-                ],
+                    'shopping_items' => $liveItems,
+                ], fn ($value) => $value !== null),
             );
         })->afterResponse();
 

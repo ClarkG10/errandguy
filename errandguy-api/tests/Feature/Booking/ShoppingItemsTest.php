@@ -203,6 +203,28 @@ class ShoppingItemsTest extends TestCase
         $response->assertStatus(422);
     }
 
+    public function test_a_list_too_big_for_a_live_message_still_saves_and_notifies_without_the_items(): void
+    {
+        // 100 items with long names is past the realtime server's 10 KB message
+        // limit: the broadcast failed on every tick. The tick is saved, the
+        // inbox card still updates, and the list itself is left out of it.
+        $items = [];
+        foreach (range(1, 100) as $i) {
+            $items[] = ['id' => "item-{$i}", 'name' => str_repeat('Long product name ', 10), 'qty' => 1, 'checked' => false, 'checked_at' => null];
+        }
+        $this->booking->update(['shopping_items' => $items]);
+
+        $this->actingAs($this->runner)
+            ->patchJson("/api/v1/runner/errand/{$this->booking->id}/shopping-items", [
+                'items' => [['id' => 'item-1', 'checked' => true]],
+            ])->assertOk();
+
+        $this->assertTrue($this->booking->fresh()->shopping_items[0]['checked']);
+        $card = \App\Models\Notification::where('user_id', $this->booking->customer_id)->where('type', 'shopping_items_updated')->sole();
+        $this->assertArrayNotHasKey('shopping_items', $card->data);
+        $this->assertSame($this->booking->id, $card->data['booking_id']);
+    }
+
     private function seedList(): void
     {
         $this->booking->update([
