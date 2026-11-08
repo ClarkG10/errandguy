@@ -47,12 +47,18 @@ const api = axios.create({
  *     bursts like "GET /bookings/{id} ×4" caused by overlapping useEffect
  *     re-runs and focus refetches.
  *
- *  2. Micro-cache (default 1.5s) — repeated GETs within the window resolve
- *     synchronously from the last response. Screens that mount/unmount
- *     rapidly (tab switches, navigation) no longer hammer the API.
+ *  2. Micro-cache — OPT-IN per request via `cacheTtlMs`. A GET that passes it
+ *     resolves from the last response for that long. Without it nothing is
+ *     ever served from this cache: pollers and screens read the network.
  *
  * Mutations (POST/PUT/PATCH/DELETE) bypass both and additionally invalidate
- * cache entries that share their URL prefix to keep reads fresh after writes.
+ * cache entries (and in-flight GETs) that share their URL prefix, before they
+ * are sent and again once they settle, so a read issued after a write can't be
+ * answered by a response that started before it.
+ *
+ * NOTE: for a long time none of this ran. axios 1.x binds `api.get/post/…` to
+ * its inner context, so they never reached the patched `api.request` — the
+ * verb helpers are re-pointed at it at the bottom of this file.
  *
  * Per-request opt-out: pass `{ noDedupe: true }` or `{ noCache: true }` in
  * the axios config (e.g., `api.get(url, { noDedupe: true })`).
@@ -76,7 +82,18 @@ type ExtraConfig = AxiosRequestConfig & {
   noConditional?: boolean;
 };
 
-const DEFAULT_GET_CACHE_MS = 8000;
+// No time-based cache unless the caller asks for one with `cacheTtlMs`. This
+// layer never actually ran until the verb helpers were wired to it (see the
+// bottom of this file), so no screen was ever checked against a default cache
+// — and live pollers (tracking, chat) would have been handed stale answers.
+const DEFAULT_GET_CACHE_MS = 0;
+// And not even then, for now. ~36 calls pass their own `cacheTtlMs` (profile
+// 30s, wallet balance 15s, an errand 4s…), written for a cache that never
+// ran, so no screen was ever checked with them: a refetch after a live update
+// inside that window would show the old state. Production has always read the
+// network; keep it that way until each TTL is checked on a phone. Dedupe, ETag
+// revalidation and the GET retry are on — those can't serve stale data.
+const TIME_CACHE_ENABLED = false;
 // Hard cap on cached GET responses so the micro-cache can't grow unbounded for
 // the life of a session (keys vary by URL+params, so TTL alone doesn't bound
 // size). Eviction only ever causes a correctness-preserving MISS (fresh
@@ -125,6 +142,37 @@ const DEFAULT_GET_RETRIES = 2;
 const RETRY_DELAYS_MS = [2000, 5000, 10000];
 const RETRY_TIMEOUT_MS = 12000;
 
+/** What the login screen says after a 401 drops someone out of the app. The
+ *  client can't tell why the token stopped working (expired, revoked, account
+ *  suspended), so it doesn't guess — it only says what happened. */
+export const SIGNED_OUT_REASON = "You've been signed out. Please sign in again.";
+
+/** The bearer token a request was actually sent with, or null if none. */
+function sentBearer(config: AxiosRequestConfig | undefined): string | null {
+  const headers = config?.headers as any;
+  const raw =
+    typeof headers?.get === 'function'
+      ? headers.get('Authorization')
+      : headers?.Authorization ?? headers?.authorization;
+  if (typeof raw !== 'string' || !raw.startsWith('Bearer ')) return null;
+  return raw.slice('Bearer '.length) || null;
+}
+
+/**
+ * Did this request carry the token the app is using RIGHT NOW?
+ *
+ * A response can arrive after the session it belonged to is gone — sent with
+ * an old token, then a sign-out and a new sign-in happen before it lands. Its
+ * 401, or the rotated token it carries, describes that OLD session; acting on
+ * it would end (or overwrite the token of) the newer one. Compared against the
+ * value the request interceptor reads, not the store's copy — they differ
+ * during a pending biometric unlock.
+ */
+function carriedCurrentToken(config: AxiosRequestConfig | undefined): boolean {
+  const sent = sentBearer(config);
+  return !!sent && sent === secureStorage.peek('auth_token');
+}
+
 /**
  * Adopt a server-rotated access token.
  *
@@ -144,6 +192,9 @@ function adoptRotatedToken(response: AxiosResponse<any>): void {
   try {
     const fresh = response.headers?.['x-new-token'] ?? response.headers?.['X-New-Token'];
     if (typeof fresh !== 'string' || !fresh) return;
+    // A late response from a session that has since ended must not plant its
+    // replacement token over the current one.
+    if (!carriedCurrentToken(response.config)) return;
 
     // Compare against the value the REQUEST interceptor actually reads, not the
     // store's copy — they diverge during a pending biometric unlock.
@@ -161,6 +212,17 @@ function adoptRotatedToken(response: AxiosResponse<any>): void {
     }
   } catch {
     /* store not ready, or headers absent — keep using the current token */
+  }
+}
+
+/** Is someone inside the app right now (not merely holding a token behind a
+ *  pending biometric unlock)? Lazy require avoids the api↔authStore cycle. */
+function wasSignedIn(): boolean {
+  try {
+    const { useAuthStore } = require('../stores/authStore');
+    return !!useAuthStore.getState().isAuthenticated;
+  } catch {
+    return false;
   }
 }
 
@@ -284,6 +346,12 @@ const invalidateRelated = (url?: string) => {
   for (const k of Array.from(microCache.keys())) {
     if (k.includes(root) || k.includes(parent)) microCache.delete(k);
   }
+  // Also stop new reads joining a GET already in the air: it may have been
+  // answered before this write landed. Dropping the entry doesn't cancel it —
+  // whoever is already waiting on it still gets their answer.
+  for (const k of Array.from(inflight.keys())) {
+    if (k.includes(root) || k.includes(parent)) inflight.delete(k);
+  }
 };
 
 const setCache = (key: string, response: AxiosResponse<any>) => {
@@ -313,12 +381,16 @@ api.interceptors.request.use(
     if (token === undefined) {
       token = await secureStorage.get('auth_token');
     }
-    if (token) {
+    // A request that names its own bearer keeps it: signing out a session the
+    // phone has already dropped (authStore releaseDroppedSession) must reach
+    // the server as THAT session, never as whoever is signed in by then.
+    if (token && !sentBearer(config)) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     // Forward the per-attempt idempotency key for money mutations. Mutations
-    // flow straight to rawRequest (they bypass the GET wrapper), but the
-    // interceptor still runs on that path, so setting it here reaches the POST.
+    // skip the GET wrapper's dedupe/cache/retry and go straight to rawRequest,
+    // but the interceptor still runs on that path, so setting it here reaches
+    // the POST.
     const idem = (config as ExtraConfig).idempotencyKey;
     if (idem) {
       config.headers['Idempotency-Key'] = idem;
@@ -366,12 +438,21 @@ api.interceptors.response.use(
       error?.name === 'CanceledError' ||
       error?.code === 'ERR_CANCELED' ||
       error?.message === 'canceled';
+    // axios error code (e.g. 'ECONNABORTED' on a client-side timeout). Used to
+    // tell a timeout apart from being offline — both have no response.
+    const axiosCode: string | undefined = error?.code;
     // Offline inference: a transport-level failure (no HTTP response at
     // all, and not an intentional cancel) flips the offline flag; any
     // response — even a 4xx/5xx — proves the server is reachable.
+    //
+    // A timeout is NOT offline: the server is slow, not gone. Flipping the
+    // flag for one showed the offline banner over a working connection and
+    // switched off the GET retry (isRetryableError fails fast while
+    // offline) exactly when a retry was the right move.
+    const timedOut = classifyError(0, axiosCode) === 'timeout';
     if (error?.response) {
       network.setOffline(false);
-    } else if (!isCanceled) {
+    } else if (!isCanceled && !timedOut) {
       network.setOffline(true);
     }
     const isSilent = !!(error?.config as ExtraConfig | undefined)?.silent;
@@ -412,10 +493,6 @@ api.interceptors.response.use(
       }
     }
 
-    // axios error code (e.g. 'ECONNABORTED' on a client-side timeout). Used to
-    // tell a timeout apart from being offline — both have no response.
-    const axiosCode: string | undefined = error?.code;
-
     if (error.response) {
       const { status, data } = error.response;
       // Machine-readable code from the standardized backend envelope (additive;
@@ -423,8 +500,15 @@ api.interceptors.response.use(
       const backendCode: string | undefined = data?.code;
       const kind = classifyError(status, axiosCode, backendCode);
 
-      if (status === 401) {
-        await endSession();
+      // Only a 401 for the token in use now ends the session. A late 401 for
+      // an older token (signed out, then someone signed in before it landed)
+      // would otherwise tear down the brand-new session; a request sent with
+      // no token at all has no session to end.
+      if (status === 401 && carriedCurrentToken(error.config)) {
+        // Say so when it drops someone out of the app — a silent bounce to
+        // the login screen reads as a bug. Not said behind a pending
+        // biometric unlock: they never got in.
+        await endSession({ reason: wasSignedIn() ? SIGNED_OUT_REASON : undefined });
       }
 
       // A DEAD account (suspended / banned / deleted). EnsureUserActive returns
@@ -437,7 +521,13 @@ api.interceptors.response.use(
       // A plain 403 (a permission check on one endpoint — someone else's
       // booking, a runner-only route) must NOT end the session, so this is
       // deliberately narrow.
-      if (status === 403 && (backendCode === 'ACCOUNT_SUSPENDED' || backendCode === 'ACCOUNT_INACTIVE')) {
+      // Same token check as the 401 above: a late 403 for an account that has
+      // already signed out must not end whoever signed in after it.
+      if (
+        status === 403 &&
+        (backendCode === 'ACCOUNT_SUSPENDED' || backendCode === 'ACCOUNT_INACTIVE') &&
+        carriedCurrentToken(error.config)
+      ) {
         await endSession({
           // Unlike an expired token, this account is not coming back: purge the
           // on-device PII and — critically — the offline mutation queue, whose
@@ -521,16 +611,20 @@ api.request = function patchedRequest<T = any, R = AxiosResponse<T>, D = any>(
   const isGet = method === 'get';
   const key = cacheKey(config);
 
-  // Mutations bypass and invalidate related cache entries
+  // Mutations bypass and invalidate related cache entries — before they go,
+  // and again once they settle, so a GET that started DURING the write can't
+  // be joined by a read that comes after it.
   if (!isGet) {
     invalidateRelated(config.url);
-    return rawRequest(config) as Promise<R>;
+    return (rawRequest(config) as Promise<R>).finally(() => invalidateRelated(config.url));
   }
 
   if (!config.noCache) {
     const ttl = config.cacheTtlMs ?? DEFAULT_GET_CACHE_MS;
     const hit = microCache.get(key);
-    if (hit && Date.now() - hit.ts < ttl) {
+    // `ttl > 0` first: no TTL means no cached serve, even if the clock has
+    // stepped backwards and made the age negative.
+    if (TIME_CACHE_ENABLED && hit && ttl > 0 && Date.now() - hit.ts < ttl) {
       // Cache hit: never went through the request interceptor, so the
       // activity bar was not bumped — nothing to balance here. Resolve
       // synchronously to keep `await api.get(...)` fast.
@@ -571,11 +665,70 @@ api.request = function patchedRequest<T = any, R = AxiosResponse<T>, D = any>(
       return effective;
     })
     .finally(() => {
-      inflight.delete(key);
+      // Only our own entry: a write or a sign-out may have dropped it, and a
+      // newer request for the same key may be registered in its place.
+      if (inflight.get(key) === promise) inflight.delete(key);
     });
 
-  if (!config.noDedupe) inflight.set(key, promise as Promise<AxiosResponse<any>>);
+  // A request carrying its own AbortSignal is not shared: aborting it would
+  // fail every other caller that had joined it.
+  if (!config.noDedupe && !config.signal) {
+    inflight.set(key, promise as Promise<AxiosResponse<any>>);
+  }
   return promise as Promise<R>;
+};
+
+// ── Route the verb helpers through the wrapper ──
+// axios 1.x builds `api.get/post/…` bound to its INNER context, and they call
+// that context's `request` — never the `api.request` property replaced above.
+// So the dedupe, ETag and retry layer above never ran for any call in the app
+// (only the interceptors did). Re-point each helper at `api.request` so it
+// does. Same shape axios uses for these helpers: the config, plus method, url
+// and (for the body-carrying verbs) data.
+api.get = function get<T = any, R = AxiosResponse<T>, D = any>(
+  url: string,
+  config?: AxiosRequestConfig<D>,
+): Promise<R> {
+  return api.request<T, R, D>({ ...config, method: 'get', url });
+};
+api.delete = function del<T = any, R = AxiosResponse<T>, D = any>(
+  url: string,
+  config?: AxiosRequestConfig<D>,
+): Promise<R> {
+  return api.request<T, R, D>({ ...config, method: 'delete', url });
+};
+api.head = function head<T = any, R = AxiosResponse<T>, D = any>(
+  url: string,
+  config?: AxiosRequestConfig<D>,
+): Promise<R> {
+  return api.request<T, R, D>({ ...config, method: 'head', url });
+};
+api.options = function options<T = any, R = AxiosResponse<T>, D = any>(
+  url: string,
+  config?: AxiosRequestConfig<D>,
+): Promise<R> {
+  return api.request<T, R, D>({ ...config, method: 'options', url });
+};
+api.post = function post<T = any, R = AxiosResponse<T>, D = any>(
+  url: string,
+  data?: D,
+  config?: AxiosRequestConfig<D>,
+): Promise<R> {
+  return api.request<T, R, D>({ ...config, method: 'post', url, data });
+};
+api.put = function put<T = any, R = AxiosResponse<T>, D = any>(
+  url: string,
+  data?: D,
+  config?: AxiosRequestConfig<D>,
+): Promise<R> {
+  return api.request<T, R, D>({ ...config, method: 'put', url, data });
+};
+api.patch = function patch<T = any, R = AxiosResponse<T>, D = any>(
+  url: string,
+  data?: D,
+  config?: AxiosRequestConfig<D>,
+): Promise<R> {
+  return api.request<T, R, D>({ ...config, method: 'patch', url, data });
 };
 
 // Provide a manual flush hook (e.g., on logout / pull-to-refresh)
@@ -600,6 +753,11 @@ export const apiCache = {
   invalidate(urlPrefix: string) {
     for (const k of Array.from(microCache.keys())) {
       if (k.includes(urlPrefix)) microCache.delete(k);
+    }
+    // The data is known stale, so the next read must not join a GET that
+    // was already in the air before it went stale.
+    for (const k of Array.from(inflight.keys())) {
+      if (k.includes(urlPrefix)) inflight.delete(k);
     }
     for (const k of Array.from(etagStore.keys())) {
       if (k.includes(urlPrefix)) etagStore.delete(k);

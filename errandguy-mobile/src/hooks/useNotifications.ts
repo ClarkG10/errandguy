@@ -4,6 +4,7 @@ import * as Device from 'expo-device';
 import { Platform, AppState } from 'react-native';
 import { router } from 'expo-router';
 import { userService } from '../services/user.service';
+import { notificationService } from '../services/notification.service';
 import { useAuthStore } from '../stores/authStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useChatStore } from '../stores/chatStore';
@@ -32,9 +33,17 @@ Notifications.setNotificationHandler({
  * moment Home first renders is how a customer ends up with push off for good.
  * Once permission is granted (from the primer, or Profile → Notifications),
  * this registers the phone on its own.
+ *
+ * `routeReady` says the app can act on a tap: auth has hydrated, someone is
+ * signed in and their role's navigator is on screen. A tap that arrives before
+ * that — the one that launched a killed app — is held until it is true.
  */
-export function useNotifications(enabled = true, options: { askOs?: boolean } = {}) {
+export function useNotifications(
+  enabled = true,
+  options: { askOs?: boolean; routeReady?: boolean } = {},
+) {
   const askOs = options.askOs ?? true;
+  const routeReady = options.routeReady ?? true;
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
   const notificationListener = useRef<Notifications.EventSubscription>(null);
   const responseListener = useRef<Notifications.EventSubscription>(null);
@@ -103,9 +112,21 @@ export function useNotifications(enabled = true, options: { askOs?: boolean } = 
   // response (the live listener never replays it). Deduped by response id so
   // the cold-start read and a possible live re-delivery don't double-route.
   const handledResponseId = useRef<string | null>(null);
+  // A killed-state launch tap lands while auth is still loading: no user, no
+  // role. Routed then, a runner's tap took the customer branch (role null →
+  // 'customer') and was bounced out of a screen that isn't theirs — and the
+  // navigator wasn't even mounted yet. So until the app is first ready, a tap
+  // is HELD (the latest wins) and routed the moment it is, through a
+  // biometric unlock too. After that, taps route straight away as before.
+  const appReady = useRef(false);
+  const heldResponse = useRef<Notifications.NotificationResponse | null>(null);
   const routeTap = useCallback((response: Notifications.NotificationResponse) => {
     const id = response?.notification?.request?.identifier ?? null;
     if (id && handledResponseId.current === id) return;
+    if (!appReady.current) {
+      heldResponse.current = response;
+      return;
+    }
     handledResponseId.current = id;
     handleNotificationTapped(response);
   }, []);
@@ -126,7 +147,8 @@ export function useNotifications(enabled = true, options: { askOs?: boolean } = 
       Notifications.addNotificationResponseReceivedListener(routeTap);
 
     // Killed-state launch tap: the OS emitted the response during startup
-    // before this listener existed, so read the buffered one and route it.
+    // before this listener existed, so read the buffered one. routeTap holds
+    // it until the app is ready (below).
     try {
       const last = Notifications.getLastNotificationResponse();
       if (last) {
@@ -146,6 +168,16 @@ export function useNotifications(enabled = true, options: { askOs?: boolean } = 
       }
     };
   }, [routeTap]);
+
+  // Route a held tap once the app is first ready. Declared after the effect
+  // above so a launch tap read on the same pass is already held.
+  useEffect(() => {
+    if (!routeReady || appReady.current) return;
+    appReady.current = true;
+    const held = heldResponse.current;
+    heldResponse.current = null;
+    if (held) routeTap(held);
+  }, [routeReady, routeTap]);
 
   // Tracks whether this device's token reached the server this session, so an
   // AppState re-trigger doesn't re-upload once it has — but DOES keep retrying
@@ -227,6 +259,12 @@ function handleNotificationTapped(
   // closing the alert — note it before navigating to the errand.
   void noteSosNotification({ type: String(data.type), data });
 
+  // The push stands for an inbox row (the server names it when one exists):
+  // opening the push has read it, so the Alerts badge must drop too.
+  if (typeof data.notification_id === 'string' && data.notification_id) {
+    markPushRowRead(data.notification_id);
+  }
+
   // The same notification `type` is sent to BOTH parties (e.g. booking_update
   // is a customer status ping AND the runner's job-offer / completion push),
   // so route by the recipient's role — otherwise a runner tapping a push lands
@@ -237,4 +275,19 @@ function handleNotificationTapped(
   const role = useAuthStore.getState().role === 'runner' ? 'runner' : 'customer';
   const target = notificationRoute({ type: String(data.type), data }, role, 'push');
   if (target) router.push(target as never);
+}
+
+/**
+ * Mark the inbox row behind a tapped push as read — the same two calls the
+ * inbox screens make on a row tap. Best-effort: a failure leaves the row
+ * unread, which the next inbox load shows honestly. The row is often not
+ * loaded yet (the tap launched the app), so the local mark can't move the
+ * badge; the server's own count is re-read once the write lands.
+ */
+function markPushRowRead(id: string): void {
+  useNotificationStore.getState().markRead(id);
+  notificationService
+    .markAsRead(id)
+    .then(() => useNotificationStore.getState().refreshUnreadCount())
+    .catch(() => {});
 }

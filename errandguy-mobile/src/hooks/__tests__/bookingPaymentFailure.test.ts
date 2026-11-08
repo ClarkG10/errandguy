@@ -17,11 +17,14 @@ jest.mock('../../services/payment.service', () => ({
   },
 }));
 
-// Capture the verifier's tick so the test can run one poll by hand.
+// Capture the verifier's tick (and how it asked to be polled) so the test can
+// run one poll by hand.
 let mockTick: (() => Promise<void>) | null = null;
+let mockPollOptions: { interval: number; enabled?: boolean } | null = null;
 jest.mock('../useSmartPolling', () => ({
-  useSmartPolling: (fn: () => Promise<void>) => {
+  useSmartPolling: (fn: () => Promise<void>, options: { interval: number; enabled?: boolean }) => {
     mockTick = fn;
+    mockPollOptions = options;
   },
 }));
 
@@ -221,5 +224,90 @@ describe('settleClosedCheckout — one quick check after the sheet is closed', (
 
     expect(paymentService.getBookingPaymentStatus).not.toHaveBeenCalled();
     expect(usePaymentStore.getState().attempt).toMatchObject({ status: 'success', reference: 'EG-1' });
+  });
+});
+
+/**
+ * "Not received yet" used to be the end of it: the attempt was marked failed,
+ * polling stopped, and the card's "If you already paid, this updates by itself"
+ * never came true. On Android, coming back from the GCash app counts as a
+ * close, so a customer who paid could be left on "not received" for good.
+ */
+describe('a checkout that closed with no payment seen yet', () => {
+  const closedUnpaid = async () => {
+    usePaymentStore.getState().beginAttempt({ kind: 'booking', amount: 150, bookingId: 'bk-1' });
+    usePaymentStore.getState().setStatus('awaiting_gateway', {
+      bookingId: 'bk-1',
+      checkoutUrl: 'https://checkout.example/abc',
+    });
+    (paymentService.getBookingPaymentStatus as jest.Mock).mockResolvedValueOnce({
+      data: { data: { status: 'pending' } },
+    });
+    await settleClosedCheckout();
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockTick = null;
+    mockPollOptions = null;
+    usePaymentStore.setState({ attempt: null, isHydrated: true });
+  });
+
+  it('keeps being checked, at a slow cadence', async () => {
+    await closedUnpaid();
+    renderHook(() => usePaymentVerification());
+
+    expect(mockPollOptions?.enabled).toBe(true);
+    expect(mockPollOptions?.interval).toBe(10000);
+  });
+
+  it('turns into the receipt when the payment lands after all', async () => {
+    await closedUnpaid();
+    renderHook(() => usePaymentVerification());
+    (paymentService.getBookingPaymentStatus as jest.Mock).mockResolvedValue({
+      data: { data: { status: 'completed', reference: 'EG-1', method: 'gcash', amount: 150 } },
+    });
+
+    await mockTick!();
+
+    expect(usePaymentStore.getState().attempt).toMatchObject({ status: 'success', reference: 'EG-1' });
+  });
+
+  it('stays "not received yet" while the server still has no payment', async () => {
+    await closedUnpaid();
+    renderHook(() => usePaymentVerification());
+    (paymentService.getBookingPaymentStatus as jest.Mock).mockResolvedValue({
+      data: { data: { status: 'pending' } },
+    });
+
+    await mockTick!();
+
+    expect(usePaymentStore.getState().attempt).toMatchObject({
+      status: 'failed',
+      failureReason: CHECKOUT_CANCELLED,
+    });
+  });
+
+  it("stops once the server rules on it, and takes the server's verdict", async () => {
+    await closedUnpaid();
+    renderHook(() => usePaymentVerification());
+    (paymentService.getBookingPaymentStatus as jest.Mock).mockResolvedValue({
+      data: { data: { status: 'expired' } },
+    });
+
+    await mockTick!();
+    expect(usePaymentStore.getState().attempt).toMatchObject({ status: 'failed', failureReason: 'expired' });
+
+    renderHook(() => usePaymentVerification());
+    expect(mockPollOptions?.enabled).toBe(false);
+  });
+
+  it('an ordinary server failure is not polled — it is final', () => {
+    usePaymentStore.getState().beginAttempt({ kind: 'booking', amount: 150, bookingId: 'bk-1' });
+    usePaymentStore.getState().setStatus('failed', { failureReason: 'DECLINED_BY_PROVIDER' });
+
+    renderHook(() => usePaymentVerification());
+
+    expect(mockPollOptions?.enabled).toBe(false);
   });
 });

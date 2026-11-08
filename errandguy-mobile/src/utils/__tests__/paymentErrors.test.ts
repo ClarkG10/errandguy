@@ -1,4 +1,4 @@
-import { mapFailureReason } from '../paymentErrors';
+import { mapFailureReason, CHECKOUT_CANCELLED } from '../paymentErrors';
 
 describe('mapFailureReason', () => {
   it('never blames the user vaguely and always stays retryable/safe by default', () => {
@@ -27,5 +27,16 @@ describe('mapFailureReason', () => {
     expect(r.message).toBe('This payment was refunded to your ErrandGuy wallet.');
     expect(r.message.toLowerCase()).not.toContain("weren't charged");
     expect(r.retryable).toBe(false);
+  });
+
+  it('a checkout closed with no payment seen is "not received yet" — never "you weren\'t charged"', () => {
+    // Only the server can say nothing was taken: the customer may have paid
+    // and the confirmation not landed yet (on Android, coming back from the
+    // GCash app counts as a close). The generic "cancel" match used to answer
+    // "Payment cancelled. You weren't charged" for it.
+    const r = mapFailureReason(CHECKOUT_CANCELLED);
+    expect(r.title).toBe('Payment not received yet');
+    expect(r.message).toMatch(/If you already paid, this updates by itself/);
+    expect(r.message).not.toMatch(/weren't charged|cancelled/i);
   });
 });

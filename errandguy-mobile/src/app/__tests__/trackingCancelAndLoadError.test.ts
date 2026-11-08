@@ -53,3 +53,25 @@ describe('tracking — a load failure has a way out', () => {
     expect(block).not.toContain('Booking not found');
   });
 });
+
+describe('tracking — a cancel whose answer was lost', () => {
+  const handler = SOURCE.slice(
+    SOURCE.indexOf('const confirmCancel = useCallback'),
+    SOURCE.indexOf('const handleSOS = useCallback'),
+  );
+  const failure = handler.slice(handler.indexOf('} catch (err) {'));
+
+  it('re-reads the errand before saying the cancel failed', () => {
+    expect(failure).toContain('cancelAppliedAnyway(err,');
+    expect(failure).toContain('bookingService.getBooking(id, { fresh: true })');
+    // Landed after all: the normal success ending, not the error.
+    const landed = failure.slice(failure.indexOf('if (landed) {'), failure.indexOf('return;'));
+    expect(landed).toContain("router.replace('/(customer)/(tabs)')");
+    expect(landed).toContain('toast.success(copy.booking.cancelled)');
+  });
+
+  it('stops claiming a cancel that did not happen, so a later one is announced', () => {
+    const notLanded = failure.slice(failure.indexOf('return;'));
+    expect(notLanded).toMatch(/selfCancelledRef\.current = false;[\s\S]*toast\.error\(errorMessage\(err, copy\.booking\.cancelFailed\)\)/);
+  });
+});

@@ -182,7 +182,23 @@ export default function RootLayout() {
   // so their OS prompt isn't spent on a cold dialog over Home. Runners keep the
   // direct prompt: their home screen's "notifications are off" warning and its
   // Settings shortcut are built around it.
-  useNotifications(canRegisterPush, { askOs: role === 'runner' });
+  //
+  // A push tap opens a screen inside the signed-in role's navigator, so it is
+  // only routed once that navigator is up: the same conditions the redirect
+  // effect below waits on, plus the redirect having landed in the role's
+  // group. A tap that launched a killed app waits here (through a biometric
+  // unlock too) instead of being routed as a customer before the role loads.
+  const roleGroup = role === 'runner' ? '(runner)' : role === 'customer' ? '(customer)' : null;
+  const pushRouteReady =
+    fontsLoaded &&
+    !isLoading &&
+    isAuthenticated &&
+    roleGroup !== null &&
+    (segments as unknown as string[])[0] === roleGroup;
+  useNotifications(canRegisterPush, {
+    askOs: role === 'runner',
+    routeReady: pushRouteReady,
+  });
 
   // Silently check for an OTA update once the app is past bootstrap. A
   // non-critical update downloads and applies on the next launch; a critical

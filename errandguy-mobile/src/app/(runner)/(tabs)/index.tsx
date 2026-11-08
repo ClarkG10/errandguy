@@ -79,6 +79,7 @@ import { RunnerHomeSkeleton } from '../../../components/ui/Skeleton';
 import { useQuery, invalidateQuery } from '../../../hooks/useQuery';
 import { useEchoChannel } from '../../../hooks/useEchoChannel';
 import {
+  STATUS_RANK,
   isClosedStatus,
   isStatusBackwards,
   isTerminalStatus,
@@ -354,7 +355,7 @@ export default function RunnerHomeScreen() {
   // Revalidate ONLY this query — not `refresh()`, which calls
   // apiCache.clearResponses() and would wipe the whole app's GET micro-cache
   // every 30s while a runner sits on Home (dropping other screens' fresh
-  // entries for zero benefit — this query's own 8s entry is already expired at
+  // entries for zero benefit — this query's own 5s entry is already expired at
   // 30s cadence). See P27.
   useSmartPolling(() => currentErrandQ.revalidate(), {
     interval: 30_000,
@@ -482,6 +483,31 @@ export default function RunnerHomeScreen() {
     currentErrandQ.updatedAt,
     isOffline,
   ]);
+
+  // ── Relaunched mid-errand ──────────────────────────────────────────────
+  // The store's errand is what puts the GPS on its navigation-grade profile
+  // (locationStore), tags each ping with the booking, and opens this screen's
+  // live status channel. Only an accept and the cockpit ever set it, so a
+  // runner whose app restarted mid-errand stayed on the coarse idle profile —
+  // the customer's pin barely moved — until they happened to open the errand.
+  //
+  // Seed it ONCE per mount, from the first fresh server answer (never an older
+  // cached copy), and only for an errand already accepted and still live. A
+  // matched offer is not theirs yet, and the offer reconcile below needs the
+  // store empty for it. Once only, because after that the accept, the cockpit
+  // and the realtime/phantom paths above own the store — and this query can
+  // still hold a pre-completion copy for a moment after the cockpit cleared it.
+  const errandSeedCheckedRef = React.useRef(false);
+  useEffect(() => {
+    if (errandSeedCheckedRef.current) return;
+    if (currentErrandQ.updatedAt == null || currentErrandQ.isStale) return;
+    errandSeedCheckedRef.current = true;
+    const fresh = currentErrandQ.data;
+    if (!fresh || useRunnerStore.getState().currentErrand) return;
+    const accepted = (STATUS_RANK[fresh.status] ?? -1) >= STATUS_RANK.accepted;
+    if (!accepted || isTerminalStatus(fresh.status)) return;
+    useRunnerStore.setState({ currentErrand: fresh });
+  }, [currentErrandQ.data, currentErrandQ.updatedAt, currentErrandQ.isStale]);
 
   const lastSeenMatchIdRef = React.useRef<string | null>(null);
   useEffect(() => {

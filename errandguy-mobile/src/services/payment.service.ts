@@ -70,9 +70,10 @@ export const paymentService = {
   },
 
   // Authoritative status probe the app polls to VERIFY a charge (never assume).
-  // noCache/noDedupe are essential — the 8s micro-cache would otherwise pin a
-  // stale `pending` and the poll would never observe settlement. `silent` keeps
-  // the global activity bar from pinning during background polling.
+  // noCache/noDedupe are essential — a cached or shared in-flight read would
+  // otherwise pin a stale `pending` and the poll would never observe
+  // settlement. `silent` keeps the global activity bar from pinning during
+  // background polling.
   getPaymentStatus(paymentId: string) {
     return api.get(`/payments/${paymentId}/status`, {
       noCache: true,

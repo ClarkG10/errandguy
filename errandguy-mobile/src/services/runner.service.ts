@@ -336,10 +336,16 @@ export const runnerService = {
   getEarningsDaily(period: 'today' | 'week' | 'month') {
     const apiPeriod =
       period === 'week' ? 'this_week' : period === 'month' ? 'this_month' : period;
+    // The Earnings tab holds its skeleton until this answers (so the day
+    // subtotals don't paint from one page and then jump), and a failure only
+    // means falling back to adding up the rows. So answer fast or not at all:
+    // one short attempt, never the default 30s timeout plus retries.
     return api.get('/runner/earnings/daily', {
       params: { period: apiPeriod },
       cacheTtlMs: 15_000,
       silent: true,
+      retries: 0,
+      timeout: 8000,
     });
   },
 

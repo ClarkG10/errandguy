@@ -37,6 +37,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { useAuthStore } from '../../../stores/authStore';
 import { notificationService } from '../../../services/notification.service';
+import { pendingNotificationDeletes } from '../../../utils/pendingNotificationDeletes';
 import { runOptimistic } from '../../../utils/optimistic';
 import { queueable } from '../../../services/mutationQueue';
 import { warmTracking } from '../../../services/preload.service';
@@ -487,22 +488,6 @@ export default function NotificationsScreen() {
     new Map<string, React.RefObject<SwipeableMethods | null>>(),
   );
   const openRowIdRef = useRef<string | null>(null);
-  // Deferred server deletes keyed by notification id (undo window).
-  const pendingDeletes = useRef(
-    new Map<string, ReturnType<typeof setTimeout>>(),
-  );
-  // Leaving the screen (sign-out, account switch) ends the undo window: send
-  // any still-pending delete now rather than dropping it.
-  useEffect(() => {
-    const pending = pendingDeletes.current;
-    return () => {
-      pending.forEach((t, id) => {
-        clearTimeout(t);
-        notificationService.deleteNotification(id).catch(() => {});
-      });
-      pending.clear();
-    };
-  }, []);
 
   // The chips are a SERVER filter now, and part of the cache key so switching
   // category refetches. They used to filter the loaded rows only, so a busy
@@ -760,22 +745,19 @@ export default function NotificationsScreen() {
         .getState()
         .notifications.findIndex((n) => n.id === item.id);
       remove(item.id);
-      const timer = setTimeout(() => {
-        pendingDeletes.current.delete(item.id);
+      // Outlives this screen (utils/pendingNotificationDeletes): the Undo
+      // toast does, so leaving the inbox must not send the delete early.
+      pendingNotificationDeletes.schedule(item.id, UNDO_DELETE_MS, () => {
         notificationService.deleteNotification(item.id).catch(() => {
           restoreAt(item, index);
           toast.error("Couldn't delete notification. Please try again.");
         });
-      }, UNDO_DELETE_MS);
-      pendingDeletes.current.set(item.id, timer);
+      });
       toast.info(DELETED_TOAST, {
         actionLabel: 'Undo',
         onAction: () => {
-          const pending = pendingDeletes.current.get(item.id);
           // Window already closed — the server delete is in flight.
-          if (!pending) return;
-          clearTimeout(pending);
-          pendingDeletes.current.delete(item.id);
+          if (!pendingNotificationDeletes.cancel(item.id)) return;
           restoreAt(item, index);
         },
       });
@@ -788,8 +770,7 @@ export default function NotificationsScreen() {
     const prev = useNotificationStore.getState().notifications;
     const prevUnread = useNotificationStore.getState().unreadCount;
     // Clear-all supersedes any deferred single-row deletes.
-    pendingDeletes.current.forEach((t) => clearTimeout(t));
-    pendingDeletes.current.clear();
+    pendingNotificationDeletes.cancelAll();
     // Close the modal first: the list empties optimistically, and a rollback
     // restores it. Toasts can't render above a native Modal, so the failure
     // toast must fire after the dialog is gone.

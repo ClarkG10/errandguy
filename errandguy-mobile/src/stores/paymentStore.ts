@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { newIdempotencyKey } from '../utils/idempotency';
+import { CHECKOUT_CANCELLED } from '../utils/paymentErrors';
 
 /**
  * Tracks the single in-flight money attempt so it can be VERIFIED — not
@@ -226,13 +227,21 @@ export const usePaymentStore = create<PaymentStoreState>((set, get) => ({
       // 'awaiting_gateway' render a button-less full-screen Modal
       // (PaymentProgress), so if the status endpoint is erroring, a rehydrated
       // attempt in one of those states would re-trap the user on EVERY relaunch
-      // (which is exactly why reloading never un-sticks the app). Bring it back
-      // as the honest, dismissable 'pending' state instead — still polled, still
-      // lands the real outcome, but the user can always leave.
+      // (which is exactly why reloading never un-sticks the app). Bring each
+      // back in a dismissable state instead — still polled, still lands the
+      // real outcome, but the user can always leave:
+      //  • 'verifying' — they came back from checkout — as 'pending', "being
+      //    processed";
+      //  • 'awaiting_gateway' — the checkout was still open when the app died,
+      //    so nothing says they paid — as "not received yet". "Being processed
+      //    … no need to pay again" was a promise for money nobody had seen,
+      //    and an unpaid errand is cancelled.
       const resumed: PaymentAttempt =
-        attempt.status === 'verifying' || attempt.status === 'awaiting_gateway'
-          ? { ...attempt, status: 'pending' }
-          : attempt;
+        attempt.status === 'awaiting_gateway'
+          ? { ...attempt, status: 'failed', failureReason: CHECKOUT_CANCELLED }
+          : attempt.status === 'verifying'
+            ? { ...attempt, status: 'pending' }
+            : attempt;
       set({ attempt: resumed, isHydrated: true });
     } catch {
       await AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});

@@ -1,4 +1,5 @@
 import { CacheTTL } from './cache.service';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
 const HERE_API_KEY = process.env.EXPO_PUBLIC_HERE_API_KEY ?? '';
 
@@ -304,6 +305,10 @@ export function formatEtaMinutes(minutes: number | null | undefined): string | n
 // HERE Routing API v8
 // ---------------------------------------------------------------------------
 
+/** A stalled HERE call gives up after this, so the shared in-flight entry for
+ *  its leg clears and "Retry route" really retries (utils/fetchWithTimeout). */
+const ROUTE_FETCH_TIMEOUT_MS = 12_000;
+
 interface HereRouteRaw {
   coords: [number, number][];
   distanceMeters: number;
@@ -328,7 +333,7 @@ async function fetchHereRoute(
     `&return=${returnFields}` +
     `&apiKey=${HERE_API_KEY}`;
   if (__DEV__) console.log(`[route] Fetching: (${from.lat},${from.lng}) → (${to.lat},${to.lng}) [${mode}]`);
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, ROUTE_FETCH_TIMEOUT_MS);
   if (!res.ok) {
     console.error(`[route] HTTP error: ${res.status}`);
     return null;

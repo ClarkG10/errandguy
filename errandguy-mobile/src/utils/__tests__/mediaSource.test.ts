@@ -21,6 +21,8 @@ describe('mediaSource', () => {
   afterEach(() => peek.mockReset());
 
   it('never sends the login to another host, however much its link looks like ours', () => {
+    // A gated path on another host is fetched from the API itself (see the
+    // rewrite case below), so the token only ever travels with OUR origin.
     peek.mockReturnValue('tok123');
     for (const url of [
       'https://api.errandguy.app.evil.tld/internal/media/chat-images/b/x.jpg',
@@ -28,6 +30,47 @@ describe('mediaSource', () => {
       'https://evil.tld/internal/media/chat-images/b/x.jpg',
       'http://api.errandguy.app/internal/media/chat-images/b/x.jpg',
       'https://evil.tld/api/v1/runner/documents/doc/file',
+    ]) {
+      const source = mediaSource(url)!;
+      expect(source.headers).toBeDefined();
+      expect(source.uri.startsWith('https://api.errandguy.app/')).toBe(true);
+      expect(source.uri).not.toContain('evil.tld');
+    }
+  });
+
+  it('fetches a private path stored under another host name from the API, with the login', () => {
+    // Older rows were built with the server's APP_URL, not the address this
+    // app calls; since these routes need the login they 403'd.
+    peek.mockReturnValue('tok123');
+    expect(
+      mediaSource('https://old-host.errandguy.app/internal/media/chat-images/b/x.jpg?v=3'),
+    ).toEqual({
+      uri: 'https://api.errandguy.app/internal/media/chat-images/b/x.jpg?v=3',
+      headers: { Authorization: 'Bearer tok123' },
+    });
+    expect(mediaSource('https://old-host.errandguy.app/api/v1/runner/documents/d1/file')).toEqual({
+      uri: 'https://api.errandguy.app/api/v1/runner/documents/d1/file',
+      headers: { Authorization: 'Bearer tok123' },
+    });
+  });
+
+  it('gives another host no token for any other path', () => {
+    peek.mockReturnValue('tok123');
+    for (const url of [
+      'https://evil.tld/storage/avatars/1_x.jpg',
+      'https://evil.tld/photo.jpg?next=/internal/media/chat-images/b/x.jpg',
+      'https://evil.tld/images/internal/media/x.jpg',
+      'https://cdn.example.com/runner/documents/9b1c/file-preview.jpg',
+    ]) {
+      expect(mediaSource(url)).toEqual({ uri: url });
+    }
+  });
+
+  it('never carries a path that could climb out of the media route onto our host', () => {
+    peek.mockReturnValue('tok123');
+    for (const url of [
+      'https://evil.tld/internal/media/../../api/v1/user/profile',
+      'https://evil.tld/internal/media/%2e%2e/%2E%2E/api/v1/user/profile',
     ]) {
       expect(mediaSource(url)).toEqual({ uri: url });
     }

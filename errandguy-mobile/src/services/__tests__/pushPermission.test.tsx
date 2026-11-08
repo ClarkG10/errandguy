@@ -148,7 +148,7 @@ describe('wiring', () => {
 
   it('the root layout asks customers through the primer, never cold', () => {
     const root = read('app/_layout.tsx');
-    expect(root).toContain("useNotifications(canRegisterPush, { askOs: role === 'runner' })");
+    expect(root).toMatch(/useNotifications\(canRegisterPush, \{\s*askOs: role === 'runner',/);
     expect(root).toContain("<NotificationPrimer enabled={canRegisterPush && role === 'customer'} />");
   });
 

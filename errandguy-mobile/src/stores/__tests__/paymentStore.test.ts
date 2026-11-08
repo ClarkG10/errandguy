@@ -14,6 +14,7 @@ import {
   isAttemptTerminal,
   shouldRetainIdempotencyKey,
 } from '../paymentStore';
+import { CHECKOUT_CANCELLED } from '../../utils/paymentErrors';
 
 const STORAGE_KEY = '@payment_attempt_v1';
 
@@ -129,6 +130,31 @@ describe('paymentStore', () => {
     expect(a!.paymentId).toBe('pay_9');
   });
 
+  it('a checkout still open when the app died comes back as "not received yet", not "being processed"', async () => {
+    // Nothing says this was paid. "Being processed — no need to pay again"
+    // would be a promise for money nobody has seen, and an unpaid errand is
+    // cancelled. It holds no payment lock, and the verifier keeps checking it.
+    const now = Date.now();
+    await AsyncStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        attemptId: 'a4', idempotencyKey: 'k4', kind: 'booking', bookingId: 'bk-4',
+        checkoutUrl: 'https://checkout.example/x', amount: 150, status: 'awaiting_gateway',
+        startedAt: now, updatedAt: now,
+      }),
+    );
+
+    await act(async () => {
+      await usePaymentStore.getState().loadFromStorage();
+    });
+
+    const a = usePaymentStore.getState().attempt!;
+    expect(a.status).toBe('failed');
+    expect(a.failureReason).toBe(CHECKOUT_CANCELLED);
+    expect(a.checkoutUrl).toBe('https://checkout.example/x');
+    expect(isAttemptActive(a)).toBe(false);
+  });
+
   describe('an attempt saved by the app build before the launch simplification', () => {
     const save = (attempt: Record<string, unknown>) => {
       const now = Date.now();
@@ -168,7 +194,10 @@ describe('paymentStore', () => {
       expect(a.kind).toBe('tip');
       expect(a.transactionId).toBe('tx-9');
       expect(a).not.toHaveProperty('topupId');
-      expect(a.status).toBe('pending');
+      // Its checkout was still open when the app died: "not received yet",
+      // which the verifier keeps checking (see usePaymentVerification).
+      expect(a.status).toBe('failed');
+      expect(a.failureReason).toBe(CHECKOUT_CANCELLED);
     });
 
     it('still verifies a card booking charge started on the old build', async () => {

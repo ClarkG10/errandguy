@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CacheService, CacheTTL } from './cache.service';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
 const HERE_API_KEY = process.env.EXPO_PUBLIC_HERE_API_KEY ?? '';
 
@@ -8,6 +9,11 @@ const HERE_API_KEY = process.env.EXPO_PUBLIC_HERE_API_KEY ?? '';
 if (!HERE_API_KEY && __DEV__) {
   console.error('[geocoding] EXPO_PUBLIC_HERE_API_KEY is EMPTY — geocoding disabled. Check your .env file.');
 }
+
+/** A stalled HERE call gives up after this, so the shared CacheService
+ *  in-flight entry for its key clears and the next lookup goes out fresh
+ *  (utils/fetchWithTimeout). */
+const GEOCODE_FETCH_TIMEOUT_MS = 12_000;
 
 const RECENT_PLACES_KEY = '@errandguy:recent_places';
 const RECENT_PLACES_CAP = 8;
@@ -49,7 +55,7 @@ export const geocodingService = {
             `&lang=en-US` +
             `&apiKey=${HERE_API_KEY}`;
           if (__DEV__) console.log(`[geocoding.reverse] Fetching: at=${lat},${lng}`);
-          const res = await fetch(url);
+          const res = await fetchWithTimeout(url, GEOCODE_FETCH_TIMEOUT_MS);
           if (!res.ok) throw new Error(`here_revgeocode_http_${res.status}`);
           const data = await res.json();
           if (__DEV__) console.log(`[geocoding.reverse] items: ${data.items?.length ?? 0}`);
@@ -103,7 +109,7 @@ export const geocodingService = {
             `&limit=${limit}` +
             `&apiKey=${HERE_API_KEY}`;
           if (__DEV__) console.log(`[geocoding.search] Query: "${trimmed}", proximity: ${proxKey}`);
-          const res = await fetch(url);
+          const res = await fetchWithTimeout(url, GEOCODE_FETCH_TIMEOUT_MS);
           if (!res.ok) throw new Error(`here_discover_http_${res.status}`);
           const data = await res.json();
           const items: any[] = data.items ?? [];

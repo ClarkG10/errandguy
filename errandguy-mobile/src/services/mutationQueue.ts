@@ -307,8 +307,9 @@ let flushChain: Promise<void> = Promise.resolve();
 
 /**
  * Replay every pending mutation in FIFO order. Safe to call repeatedly and
- * concurrently — calls are serialised and a no-op while offline or empty. Stops
- * early (leaving the rest queued) the instant connectivity drops again.
+ * concurrently — calls are serialised and a no-op while offline, signed out or
+ * empty. Stops early (leaving the rest queued) the instant connectivity drops
+ * again.
  */
 export function flushMutationQueue(): Promise<void> {
   // Serialise: chain onto any in-flight flush so two reconnect signals can't
@@ -321,6 +322,13 @@ async function runFlush(): Promise<void> {
   if (network.isOffline()) return;
   const store = useMutationQueueStore.getState();
   if (store.flushing) return;
+  // Nobody signed in: nothing here may go out. A reconnect can land on the
+  // login screen, or in the instant a new sign-in is completing; a replay
+  // then went out with no token, came back 401, and the 401 teardown ended
+  // the session that was just starting. The queue drains when someone signs
+  // in (see initMutationQueue).
+  const activeUserId = currentUserId();
+  if (!activeUserId) return;
 
   // Expire stale entries up front.
   const now = Date.now();
@@ -337,13 +345,12 @@ async function runFlush(): Promise<void> {
   try {
     // Snapshot ids to process; re-read the live list each iteration so a
     // concurrently-enqueued item written during the flush isn't lost.
-    const activeUserId = currentUserId();
     for (const entry of [...list]) {
       if (network.isOffline()) break; // dropped connection mid-flush — resume later.
       // Never replay another account's intent under this session's token.
       // See QueuedMutation.userId — the 401 path resets auth without running
       // the account purge, so this is the backstop for a shared handset.
-      if (entry.userId && activeUserId && entry.userId !== activeUserId) {
+      if (entry.userId && entry.userId !== activeUserId) {
         list = list.filter((m) => m.id !== entry.id);
         setPending(list);
         void persist(list);
@@ -402,8 +409,8 @@ let initialised = false;
 
 /**
  * Load persisted entries and wire the reconnect flush. Call once at app root.
- * Idempotent. On an offline→online transition (and immediately, if we boot up
- * online with a non-empty queue) the queue drains.
+ * Idempotent. On an offline→online transition, when someone signs in, and
+ * immediately if we boot up online with a non-empty queue, the queue drains.
  */
 export async function initMutationQueue(): Promise<void> {
   if (initialised) return;
@@ -426,6 +433,19 @@ export async function initMutationQueue(): Promise<void> {
     useNetworkStore.subscribe((state, prev) => {
       if (prev.isOffline && !state.isOffline) void flushMutationQueue();
     });
+
+    // And whenever someone signs in. A flush finds nothing to do while signed
+    // out (runFlush), so a backlog left by an expired session — or a boot
+    // that hydrated before auth did — drains the moment its owner is back.
+    // Lazy require: authStore reaches this module through
+    // clearAccountScopedState.
+    const { useAuthStore } = require('../stores/authStore');
+    useAuthStore.subscribe(
+      (state: { user: { id?: string } | null }, prev: { user: { id?: string } | null }) => {
+        const id = state.user?.id ?? null;
+        if (id && id !== (prev.user?.id ?? null)) void flushMutationQueue();
+      },
+    );
 
     // Booted online with a backlog (queued last session, killed before draining).
     if (!network.isOffline() && getPending().length > 0) {

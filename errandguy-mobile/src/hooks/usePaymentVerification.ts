@@ -9,6 +9,7 @@ import {
   type AttemptStatus,
 } from '../stores/paymentStore';
 import type { PaymentStage } from '../components/ui/PaymentProgress';
+import { CHECKOUT_CANCELLED } from '../utils/paymentErrors';
 
 /**
  * The shared engine that VERIFIES a payment attempt against the backend — used
@@ -23,6 +24,8 @@ import type { PaymentStage } from '../components/ui/PaymentProgress';
  *    connection degrades to "still verifying", never a false failure).
  *  • After a short wait with no confirmation we move to the honest `pending`
  *    state ("you can safely leave, we'll notify you") while continuing to poll.
+ *  • A checkout that closed with no payment seen ("not received yet") is still
+ *    polled, slowly, until the server rules on it — see awaitingLatePayment.
  *  • Payouts have no gateway redirect, so they aren't polled here.
  */
 
@@ -35,6 +38,28 @@ const PENDING_AFTER_MS = 35000;
 const QUICK_CHECK_TIMEOUT_MS = 4000;
 
 const POLL_STATUSES: AttemptStatus[] = ['awaiting_gateway', 'verifying', 'pending'];
+
+// The slow cadence for a checkout that closed with no payment seen yet.
+const NOT_RECEIVED_POLL_MS = 10000;
+const NOT_RECEIVED_MAX_INTERVAL_MS = 30000;
+
+/**
+ * A checkout that closed (or that a relaunch found still open) before the
+ * server saw a payment. It reads "not received yet", but the customer may well
+ * have paid: on Android, coming back from the GCash app reports a close, and
+ * the gateway's confirmation can take longer than the one quick check. Its
+ * card promises "If you already paid, this updates by itself" — so it keeps
+ * being asked about, slowly, until the server rules on it or the customer
+ * leaves. It is 'failed' only so the overlay shows its actionable card; it
+ * holds no payment lock.
+ */
+function awaitingLatePayment(attempt: PaymentAttempt): boolean {
+  return attempt.status === 'failed' && attempt.failureReason === CHECKOUT_CANCELLED;
+}
+
+function isPolled(attempt: PaymentAttempt): boolean {
+  return POLL_STATUSES.includes(attempt.status) || awaitingLatePayment(attempt);
+}
 
 export function attemptToStage(status?: AttemptStatus | null): PaymentStage | null {
   switch (status) {
@@ -178,8 +203,9 @@ export function usePaymentVerification(): PaymentVerificationState {
   const shouldPoll =
     !!attempt &&
     attempt.kind !== 'payout' &&
-    POLL_STATUSES.includes(attempt.status) &&
+    isPolled(attempt) &&
     !!pollId(attempt);
+  const notReceived = !!attempt && awaitingLatePayment(attempt);
 
   // Safety net: a non-payout attempt stuck in 'verifying' with no pollId can
   // never poll (shouldPoll is false), so the tick that flips to the honest,
@@ -219,7 +245,7 @@ export function usePaymentVerification(): PaymentVerificationState {
 
   const tick = useCallback(async () => {
     const current = usePaymentStore.getState().attempt;
-    if (!current || current.kind === 'payout' || !POLL_STATUSES.includes(current.status)) return;
+    if (!current || current.kind === 'payout' || !isPolled(current)) return;
     if (inFlight.current) return;
     inFlight.current = true;
     try {
@@ -253,12 +279,12 @@ export function usePaymentVerification(): PaymentVerificationState {
   }, [setStatus]);
 
   useSmartPolling(tick, {
-    interval: POLL_INTERVAL_MS,
+    interval: notReceived ? NOT_RECEIVED_POLL_MS : POLL_INTERVAL_MS,
     enabled: shouldPoll,
     runOnMount: true,
     pauseWhenOffline: true,
     backoffOnError: true,
-    maxInterval: POLL_MAX_INTERVAL_MS,
+    maxInterval: notReceived ? NOT_RECEIVED_MAX_INTERVAL_MS : POLL_MAX_INTERVAL_MS,
   });
 
   return {

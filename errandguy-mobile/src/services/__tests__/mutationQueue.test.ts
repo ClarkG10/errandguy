@@ -10,6 +10,7 @@ import {
   enqueueMutation,
   flushMutationQueue,
   clearMutationQueue,
+  initMutationQueue,
   useMutationQueueStore,
 } from '../mutationQueue';
 import { useNetworkStore } from '../../stores/networkStore';
@@ -48,11 +49,22 @@ jest.mock('../notification.service', () => ({ notificationService: {} }));
 // currentUserId() reads authStore lazily; drive it per test.
 let mockUserId: string | null = 'user-a';
 const mockSetUser = jest.fn();
+const mockAuthListeners: Array<(state: unknown, prev: unknown) => void> = [];
 jest.mock('../../stores/authStore', () => ({
   useAuthStore: {
     getState: () => ({ user: mockUserId ? { id: mockUserId } : null, setUser: mockSetUser }),
+    subscribe: (fn: (state: unknown, prev: unknown) => void) => {
+      mockAuthListeners.push(fn);
+      return () => {};
+    },
   },
 }));
+/** Sign `id` in the way authStore.setUser does: state changes, listeners fire. */
+const signIn = (id: string) => {
+  const prev = { user: mockUserId ? { id: mockUserId } : null };
+  mockUserId = id;
+  for (const fn of mockAuthListeners) fn({ user: { id } }, prev);
+};
 const mockUpdateProfile = jest.fn();
 const mockGetProfile = jest.fn();
 jest.mock('../user.service', () => ({
@@ -399,6 +411,45 @@ describe('cross-account safety', () => {
 
     useNetworkStore.setState({ isOffline: false, lastChangedAt: null });
     await flushMutationQueue();
+
+    expect(mockUpdateChecklistTicks).toHaveBeenCalledTimes(1);
+    expect(pending()).toHaveLength(0);
+  });
+
+  it('replays nothing while nobody is signed in, and keeps it for its owner', async () => {
+    // A reconnect on the login screen (or mid-sign-in) used to replay with no
+    // token: 401, and the 401 teardown ended the session being created.
+    mockUserId = 'user-a';
+    useNetworkStore.setState({ isOffline: true, lastChangedAt: null });
+    enqueueMutation({
+      kind: 'runner.updateChecklistTicks',
+      payload: { bookingId: 'bk-1', items: [{ id: 'i1', checked: true }] },
+    });
+
+    mockUserId = null;
+    useNetworkStore.setState({ isOffline: false, lastChangedAt: null });
+    await flushMutationQueue();
+
+    expect(mockUpdateChecklistTicks).not.toHaveBeenCalled();
+    expect(pending()).toHaveLength(1);
+  });
+
+  it('drains the moment its owner signs back in', async () => {
+    await initMutationQueue();
+    mockUserId = 'user-a';
+    useNetworkStore.setState({ isOffline: true, lastChangedAt: null });
+    enqueueMutation({
+      kind: 'runner.updateChecklistTicks',
+      payload: { bookingId: 'bk-1', items: [{ id: 'i1', checked: true }] },
+    });
+    mockUserId = null; // the session expired while offline
+    useNetworkStore.setState({ isOffline: false, lastChangedAt: null });
+    await flushMutationQueue();
+    expect(mockUpdateChecklistTicks).not.toHaveBeenCalled();
+
+    // No explicit flush here: the sign-in itself must start it.
+    signIn('user-a');
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mockUpdateChecklistTicks).toHaveBeenCalledTimes(1);
     expect(pending()).toHaveLength(0);

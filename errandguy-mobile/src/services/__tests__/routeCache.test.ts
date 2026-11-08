@@ -124,3 +124,46 @@ it('refreshRoute bypasses the cached entry', async () => {
 
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
+
+describe('a HERE call that stalls (Android fetch has no read timeout)', () => {
+  /** A fetch that never answers — only an abort settles it. */
+  const stall = (_url: string, init?: { signal?: AbortSignal }) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('Aborted')));
+    });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('gives up after ~12s, so "Retry route" makes a real new request', async () => {
+    jest.useFakeTimers();
+    const origin = { lat: 14.6011, lng: 121.0011 };
+    fetchMock.mockImplementationOnce(stall);
+
+    const first = routeService.getRoute(origin, pickup);
+    // A retry while it hangs still shares it — one request per leg.
+    const sharing = routeService.getRoute(origin, pickup);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(12_000);
+    await expect(first).resolves.toBeNull();
+    await expect(sharing).resolves.toBeNull();
+
+    // The stalled entry is gone: the retry goes out and succeeds.
+    const retry = await routeService.getRoute(origin, pickup);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(retry?.durationSeconds).toBe(300);
+  });
+
+  it('a guided-navigation route gives up too, rather than spin forever', async () => {
+    jest.useFakeTimers();
+    fetchMock.mockImplementationOnce(stall);
+
+    const nav = routeService.getNavigationRoute({ lat: 14.6011, lng: 121.0011 }, pickup);
+    await jest.advanceTimersByTimeAsync(12_000);
+
+    await expect(nav).resolves.toBeNull();
+  });
+});

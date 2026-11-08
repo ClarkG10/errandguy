@@ -225,15 +225,22 @@ export default function EarningsScreen() {
   // Page 1 can be refetched behind the runner's back (an errand completes,
   // the app comes back after a minute). If its first row changed, the rows
   // shifted down and the older pages already appended sit at the old offsets:
-  // a row would fall between them and never show. Start the older pages over.
+  // a row would fall between them and never show. Start the older pages over —
+  // also when none has landed yet, so a page 2 still in the air (asked for at
+  // the old offsets) is dropped when it arrives.
+  //
+  // Page 1 only decides whether there is more while it is the only page. Once
+  // older pages are loaded the last of them decides; a refetch of page 1 used
+  // to re-arm a list that had already reached its end.
   const firstRowId = historyQ.data?.[0]?.id ?? null;
   const lastFirstRowId = useRef<string | null>(null);
   useEffect(() => {
-    if (historyQ.data) setHasMore(historyQ.data.length >= EARNINGS_PAGE_SIZE);
-    if (lastFirstRowId.current !== null && firstRowId !== lastFirstRowId.current && extraPages.length > 0) {
-      resetPaging();
-    }
+    const shifted = lastFirstRowId.current !== null && firstRowId !== lastFirstRowId.current;
     lastFirstRowId.current = firstRowId;
+    if (shifted) resetPaging();
+    if (historyQ.data && (shifted || extraPages.length === 0)) {
+      setHasMore(historyQ.data.length >= EARNINGS_PAGE_SIZE);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyQ.data]);
 
@@ -338,7 +345,8 @@ export default function EarningsScreen() {
 
   // The day totals are waited for too, so the group subtotals never paint from
   // a partial page and then jump. A failed or missing endpoint doesn't hold
-  // the screen: the rows are added up instead.
+  // the screen: the rows are added up instead. A slow one holds it for at most
+  // one short attempt (runnerService.getEarningsDaily).
   const initialLoading =
     (summaryQ.loading && !summaryQ.data) ||
     (historyQ.loading && !historyQ.data) ||
@@ -769,6 +777,119 @@ export default function EarningsScreen() {
               </View>
             )}
 
+            {/* Cash-out strip — "how much can I withdraw right now, and is a
+                payout already on its way?" used to be answerable only after
+                navigating to the payout screen. Both figures live here now, next
+                to the button that acts on them.
+
+                It, the payout button and Export sit ABOVE the per-errand list.
+                They were its footer, and the list loads another page each time
+                its end is reached — so every scroll down to them pulled in more
+                rows that pushed them away again. On a busy period they were
+                out of reach until every page had loaded. */}
+            <View className="px-5 mb-3">
+              <Card padding="md">
+                <View className="flex-row items-start">
+                  <View className="flex-1 pr-3">
+                    <Eyebrow>{balance < 0 ? 'Owed from cash errands' : 'Available now'}</Eyebrow>
+                    <Text
+                      className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.7}
+                    >
+                      {balance < 0 ? '−' : ''}
+                      {formatCurrency(Math.abs(balance))}
+                    </Text>
+                    <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">
+                      {balance < 0
+                        ? 'Cleared automatically from your next prepaid earnings'
+                        : balance < minPayout
+                          ? `Min ${formatCurrency(minPayout)} to cash out`
+                          : 'Ready to withdraw'}
+                    </Text>
+                  </View>
+                  <View
+                    className="flex-1 pl-3"
+                    style={{ borderLeftWidth: 1, borderLeftColor: LightColors.divider }}
+                  >
+                    <Eyebrow>Payout in flight</Eyebrow>
+                    <Text
+                      className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.7}
+                    >
+                      {pendingPayout ? formatCurrency(pendingPayoutAmount) : '—'}
+                    </Text>
+                    <View className="flex-row items-center mt-0.5">
+                      {pendingPayout && (
+                        <Clock size={11} color={LightColors.warningDark} style={{ marginRight: 3 }} />
+                      )}
+                      <Text
+                        className="text-[11px] font-montserrat flex-1"
+                        style={{
+                          color: pendingPayout ? LightColors.warningDark : LightColors.textTertiary,
+                        }}
+                        numberOfLines={2}
+                      >
+                        {pendingPayout ? 'Processing — 1–3 business days' : 'Nothing pending'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              </Card>
+            </View>
+
+            {/* Payout Button */}
+            <View className="px-5 mb-4">
+              <Button
+                title={pendingPayout ? 'View payout status' : 'Request Payout'}
+                variant="primary"
+                onPress={() => {
+                  // The payout list is warmed at boot; the wallet-activity preview
+                  // beneath it was not, so a MONEY screen half-painted. Page size
+                  // must match the payout screen's own.
+                  prefetchPayoutActivity(userId);
+                  router.push('/(runner)/payout' as any);
+                }}
+                fullWidth
+              />
+            </View>
+
+            {/* Export — CSV (primary, from loaded rows) + PDF statement (server). */}
+            <View className="px-5 mb-4">
+              <Eyebrow className="mb-2">Export</Eyebrow>
+              <View className="flex-row" style={{ gap: 12 }}>
+                <View className="flex-1">
+                  <Button
+                    title="Export CSV"
+                    variant="secondary"
+                    icon={Download}
+                    onPress={handleExportCsv}
+                    loading={exporting === 'csv'}
+                    loadingTitle="Preparing CSV…"
+                    disabled={exporting === 'pdf'}
+                    fullWidth
+                    accessibilityHint="Share a CSV of this period's earnings"
+                  />
+                </View>
+                <View className="flex-1">
+                  <Button
+                    title="Download PDF"
+                    variant="ghost"
+                    icon={FileText}
+                    onPress={handleDownloadPdf}
+                    loading={exporting === 'pdf'}
+                    loadingTitle="Preparing PDF…"
+                    disabled={exporting === 'csv'}
+                    fullWidth
+                    accessibilityHint="Download and share the PDF earnings statement"
+                  />
+                </View>
+              </View>
+            </View>
+
             {/* Per-Errand Earnings List — hairline rows grouped by day. */}
             <View className="px-5">
               <Eyebrow className="mb-2">Per-errand</Eyebrow>
@@ -891,115 +1012,6 @@ export default function EarningsScreen() {
                 </Text>
               </Pressable>
             ) : null}
-            {/* The space the list kept below itself before the cash-out strip. */}
-            <View style={{ height: 24 }} />
-
-            {/* Cash-out strip — "how much can I withdraw right now, and is a
-                payout already on its way?" used to be answerable only after
-                navigating to the payout screen. Both figures live here now, next
-                to the button that acts on them. */}
-            <View className="px-5 mb-3">
-              <Card padding="md">
-                <View className="flex-row items-start">
-                  <View className="flex-1 pr-3">
-                    <Eyebrow>{balance < 0 ? 'Owed from cash errands' : 'Available now'}</Eyebrow>
-                    <Text
-                      className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
-                      numberOfLines={1}
-                      adjustsFontSizeToFit
-                      minimumFontScale={0.7}
-                    >
-                      {balance < 0 ? '−' : ''}
-                      {formatCurrency(Math.abs(balance))}
-                    </Text>
-                    <Text className="text-[11px] font-montserrat text-textTertiary mt-0.5">
-                      {balance < 0
-                        ? 'Cleared automatically from your next prepaid earnings'
-                        : balance < minPayout
-                          ? `Min ${formatCurrency(minPayout)} to cash out`
-                          : 'Ready to withdraw'}
-                    </Text>
-                  </View>
-                  <View
-                    className="flex-1 pl-3"
-                    style={{ borderLeftWidth: 1, borderLeftColor: LightColors.divider }}
-                  >
-                    <Eyebrow>Payout in flight</Eyebrow>
-                    <Text
-                      className="text-[22px] font-inter-semi tabular-nums text-textPrimary mt-1"
-                      numberOfLines={1}
-                      adjustsFontSizeToFit
-                      minimumFontScale={0.7}
-                    >
-                      {pendingPayout ? formatCurrency(pendingPayoutAmount) : '—'}
-                    </Text>
-                    <View className="flex-row items-center mt-0.5">
-                      {pendingPayout && (
-                        <Clock size={11} color={LightColors.warningDark} style={{ marginRight: 3 }} />
-                      )}
-                      <Text
-                        className="text-[11px] font-montserrat flex-1"
-                        style={{
-                          color: pendingPayout ? LightColors.warningDark : LightColors.textTertiary,
-                        }}
-                        numberOfLines={2}
-                      >
-                        {pendingPayout ? 'Processing — 1–3 business days' : 'Nothing pending'}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              </Card>
-            </View>
-
-            {/* Payout Button */}
-            <View className="px-5 mb-4">
-              <Button
-                title={pendingPayout ? 'View payout status' : 'Request Payout'}
-                variant="primary"
-                onPress={() => {
-                  // The payout list is warmed at boot; the wallet-activity preview
-                  // beneath it was not, so a MONEY screen half-painted. Page size
-                  // must match the payout screen's own.
-                  prefetchPayoutActivity(userId);
-                  router.push('/(runner)/payout' as any);
-                }}
-                fullWidth
-              />
-            </View>
-
-            {/* Export — CSV (primary, from loaded rows) + PDF statement (server). */}
-            <View className="px-5 mb-4">
-              <Eyebrow className="mb-2">Export</Eyebrow>
-              <View className="flex-row" style={{ gap: 12 }}>
-                <View className="flex-1">
-                  <Button
-                    title="Export CSV"
-                    variant="secondary"
-                    icon={Download}
-                    onPress={handleExportCsv}
-                    loading={exporting === 'csv'}
-                    loadingTitle="Preparing CSV…"
-                    disabled={exporting === 'pdf'}
-                    fullWidth
-                    accessibilityHint="Share a CSV of this period's earnings"
-                  />
-                </View>
-                <View className="flex-1">
-                  <Button
-                    title="Download PDF"
-                    variant="ghost"
-                    icon={FileText}
-                    onPress={handleDownloadPdf}
-                    loading={exporting === 'pdf'}
-                    loadingTitle="Preparing PDF…"
-                    disabled={exporting === 'csv'}
-                    fullWidth
-                    accessibilityHint="Download and share the PDF earnings statement"
-                  />
-                </View>
-              </View>
-            </View>
           </>
         }
       />

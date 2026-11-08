@@ -9,6 +9,21 @@ export interface PaymentErrorInfo {
   retryable: boolean;
 }
 
+/**
+ * The client's own reason for a checkout that closed (or that a relaunch found
+ * still open) before any payment was seen. NOT a server verdict: the customer
+ * may have paid and the confirmation not landed yet, so it must never read as
+ * "cancelled — you weren't charged". The attempt stays verified while it is on
+ * screen (usePaymentVerification), and flips the moment the server rules.
+ */
+export const CHECKOUT_CANCELLED = 'checkout_cancelled';
+
+const NOT_RECEIVED_YET: PaymentErrorInfo = {
+  title: 'Payment not received yet',
+  message: "We haven't received this payment yet. If you already paid, this updates by itself.",
+  retryable: true,
+};
+
 const DEFAULT: PaymentErrorInfo = {
   title: "Payment didn't go through",
   message:
@@ -19,6 +34,10 @@ const DEFAULT: PaymentErrorInfo = {
 export function mapFailureReason(reason?: string | null): PaymentErrorInfo {
   const r = (reason ?? '').toString().toLowerCase();
   if (!r) return DEFAULT;
+
+  // Before the generic "cancel" match below, which says "you weren't charged"
+  // — something only the server can know.
+  if (r === CHECKOUT_CANCELLED) return NOT_RECEIVED_YET;
 
   // The charge went through and was then given back — e.g. a second GCash/Maya
   // tip for an errand that was already tipped. "You weren't charged" would be

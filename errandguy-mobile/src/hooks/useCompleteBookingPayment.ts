@@ -2,17 +2,18 @@ import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'r
 import { useRouter } from 'expo-router';
 import { openCheckoutUrl, PAYMENT_RETURN_URL } from '../utils/browser';
 import { bookingCheckoutUrl, UNPAID_CHECKOUT_WINDOW_MINUTES } from '../utils/bookingPayment';
-import { mapFailureReason } from '../utils/paymentErrors';
-import { usePaymentStore, isAttemptActive } from '../stores/paymentStore';
+import { mapFailureReason, CHECKOUT_CANCELLED } from '../utils/paymentErrors';
+import { usePaymentStore, isAttemptActive, isAttemptTerminal } from '../stores/paymentStore';
 import { usePaymentVerification, verifyAttemptOnce } from './usePaymentVerification';
 import { toast } from '../stores/toastStore';
 import type { PaymentProgress } from '../components/ui/PaymentProgress';
 import type { Booking } from '../types';
 
-/** Marks an attempt whose gateway sheet the customer dismissed without paying,
- *  so the failure overlay can offer "Resume payment" with honest copy instead
- *  of the generic "we couldn't confirm this payment". */
-export const CHECKOUT_CANCELLED = 'checkout_cancelled';
+/** Marks an attempt whose gateway sheet closed with no payment seen yet, so
+ *  the failure overlay can offer "Resume payment" with honest copy instead of
+ *  the generic "we couldn't confirm this payment". Lives in utils/paymentErrors
+ *  (the store and the verifier need it too); re-exported for existing callers. */
+export { CHECKOUT_CANCELLED };
 
 /** What the failure overlay says after the customer backs out of checkout
  *  and one quick check found no payment yet. It claims no more than that: a
@@ -25,13 +26,18 @@ export const CHECKOUT_CANCELLED_MESSAGE =
 /**
  * The customer closed the GCash/Maya sheet. That alone doesn't mean unpaid —
  * iOS reports a cancel when the sheet is dismissed after paying but before the
- * redirect — so ask the server once, briefly (never the 35-second spinner).
- * Paid, or ruled on: that verdict stands. Otherwise land on the resumable
- * "not finished" card.
+ * redirect, and on Android coming back from the GCash app counts as a close —
+ * so ask the server once, briefly (never the 35-second spinner). Paid, or ruled
+ * on: that verdict stands. Otherwise land on the resumable "not received yet"
+ * card, which the verifier keeps checking (slowly) until the server rules — so
+ * a payment that confirms later still turns into the receipt.
  */
 export async function settleClosedCheckout(): Promise<void> {
   if (await verifyAttemptOnce()) return;
-  usePaymentStore.getState().setStatus('failed', { failureReason: CHECKOUT_CANCELLED });
+  // The poll may have landed a verdict in the instant since; never overwrite it.
+  const { attempt, setStatus } = usePaymentStore.getState();
+  if (!attempt || isAttemptTerminal(attempt)) return;
+  setStatus('failed', { failureReason: CHECKOUT_CANCELLED });
 }
 
 /**

@@ -137,7 +137,7 @@ describe('customer tracking — the terminal receipt', () => {
     const UTIL = readFileSync(join(__dirname, '..', '..', 'utils', 'cancelPreview.ts'), 'utf8');
     const lines = UTIL.slice(UTIL.indexOf('export function cancelMoneyLines'));
     expect(SOURCE).toMatch(
-      /import \{ cancelMoneyLines, cancelReceiptMessage, type CancelPreview \} from '..\/..\/..\/utils\/cancelPreview'/,
+      /import \{[^}]*\bcancelMoneyLines,[^}]*\bcancelReceiptMessage,[^}]*\} from '..\/..\/..\/utils\/cancelPreview'/,
     );
     expect(SOURCE).not.toMatch(/function cancelMoneyLines/);
     expect(lines).toMatch(/Cancellation fee: /);

@@ -129,7 +129,12 @@ import {
   wasCancelledForUnpaidPayment,
 } from '../../../utils/bookingPayment';
 import { itemsCashDue, itemsCashReadyLine } from '../../../utils/shoppingMoney';
-import { cancelMoneyLines, cancelReceiptMessage, type CancelPreview } from '../../../utils/cancelPreview';
+import {
+  cancelAppliedAnyway,
+  cancelMoneyLines,
+  cancelReceiptMessage,
+  type CancelPreview,
+} from '../../../utils/cancelPreview';
 import { rebookDraft } from '../../../utils/rebookDraft';
 import { farePaymentLine } from '../../../utils/farePaymentLine';
 import { dialNumber, EMERGENCY_NUMBER } from '../../../components/safety/emergency';
@@ -1375,6 +1380,25 @@ export default function TrackingScreen() {
         toast.success(receipt);
       }
     } catch (err) {
+      // A timeout or a 5xx may still have cancelled it — only the answer was
+      // lost. Ask the server before saying it failed (the runner cockpit
+      // reconciles a lost status change the same way).
+      const landed = await cancelAppliedAnyway(err, async () => {
+        const r = await bookingService.getBooking(id, { fresh: true });
+        return r?.data?.data as Booking | undefined;
+      });
+      if (landed) {
+        setActiveBooking(null);
+        setShowCancelModal(false);
+        router.replace('/(customer)/(tabs)');
+        // The receipt sentence came with the lost answer; the errand's
+        // receipt in Activity still shows its fee and refund.
+        toast.success(copy.booking.cancelled);
+        return;
+      }
+      // It did not happen. Stop claiming it, so a cancellation that comes
+      // later from elsewhere (staff, the unpaid timer) is still announced.
+      selfCancelledRef.current = false;
       haptics.error();
       toast.error(errorMessage(err, copy.booking.cancelFailed));
     } finally {

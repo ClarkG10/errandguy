@@ -87,9 +87,30 @@ export default function HistoryScreen() {
     setLoadMoreFailed(false);
   }, [listKey]);
 
-  // Sync hasMore based on page-1 size.
+  // Page 1 can be refetched behind the runner's back (back on the tab, the
+  // app returning after a while, an errand finishing). If its first row
+  // changed, the rows shifted: older pages already appended sit at the old
+  // offsets — a row shown twice, or one that never shows — and a page still in
+  // the air was asked for at those offsets too. Start the older pages over.
+  //
+  // Page 1 only decides whether there is more while it is the only page. Once
+  // older pages are loaded the last of them decides; a refetch of page 1 used
+  // to re-arm a list that had already reached its end.
+  const firstRowId = page1Q.data?.[0]?.id ?? null;
+  const lastFirstRowId = useRef<string | null>(null);
   useEffect(() => {
-    if (page1Q.data) setHasMore((page1Q.data.length ?? 0) >= 15);
+    const shifted = lastFirstRowId.current !== null && firstRowId !== lastFirstRowId.current;
+    lastFirstRowId.current = firstRowId;
+    if (shifted) {
+      listGeneration.current += 1;
+      setExtraPages([]);
+      setPage(1);
+      setLoadMoreFailed(false);
+    }
+    if (page1Q.data && (shifted || extraPages.length === 0)) {
+      setHasMore((page1Q.data.length ?? 0) >= 15);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page1Q.data]);
 
   const errands = useMemo(

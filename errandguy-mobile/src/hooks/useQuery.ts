@@ -62,8 +62,9 @@ export interface UseQueryResult<T> {
    *  the app-wide GET micro-cache. Use for background pollers: unlike
    *  `refresh()` (which calls `apiCache.clearResponses()` and is reserved for
    *  user-initiated pull-to-refresh), this leaves other screens' fresh cache
-   *  entries intact. Only meaningful at cadences ≥ the GET micro-cache TTL
-   *  (~8s); below that the fetcher's own `api.get` may resolve from cache. */
+   *  entries intact. A GET reaches the network unless its service opted into
+   *  a micro-cache with `cacheTtlMs`; poll such a query no faster than that
+   *  TTL, or the fetcher's own `api.get` may resolve from cache. */
   revalidate: () => Promise<void>;
   mutate: (updater: T | ((prev: T | null) => T)) => Promise<void>;
 }
@@ -259,8 +260,9 @@ export function useQuery<T>(
 
   const refresh = useCallback(async () => {
     // Pull-to-refresh is an explicit request for fresh data. The fetcher calls
-    // api.get(), which would otherwise resolve from the <=8s GET micro-cache
-    // and silently return stale data. Clearing the response cache (but NOT the
+    // api.get(), which — for a service that passes `cacheTtlMs` — would
+    // otherwise resolve from the GET micro-cache and silently return stale
+    // data. Clearing the response cache (but NOT the
     // in-flight dedup map) forces this query's next GET to be a real network
     // read, independent of how the semantic key maps to the REST URL.
     apiCache.clearResponses();

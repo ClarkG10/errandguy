@@ -115,6 +115,44 @@ async function reconcileAccount(userId: string): Promise<void> {
 }
 
 /**
+ * Let go of a session this phone drops WITHOUT a sign-out through the app:
+ * "Remember me" was off and the app was closed, or "Not you?" on the login
+ * screen. Dropping the token locally was all these did, so the server still
+ * held the sign-in — the previous account's pushes kept arriving, and a runner
+ * could stay "online" and keep being matched.
+ *
+ * Same steps as an in-app sign-out (services/session.service), never awaited
+ * — nobody waits on a sign-out they didn't ask for:
+ *   • the local half starts at once, before anyone can sign in again: the
+ *     previous account's state goes (offline write queue included, so none of
+ *     it can replay), and push is let go of on this phone;
+ *   • the server is told with the OLD token named explicitly, so the call can
+ *     only ever end that session. Offline or refused (an already-dead token)
+ *     is fine: the local cleanup has happened either way.
+ *
+ * Lazy requires: the push module is native, and session/auth services sit
+ * above this store.
+ */
+function releaseDroppedSession(staleToken: string | null): void {
+  void clearAccountScopedState().catch(() => {});
+  let deviceToken: string | null = null;
+  try {
+    const push = require('../services/pushToken');
+    deviceToken = push.currentPushToken();
+    void push.unregisterPushLocally().catch(() => {});
+  } catch {
+    /* push module unavailable — nothing registered to let go of */
+  }
+  if (!staleToken) return;
+  try {
+    const { authService } = require('../services/auth.service');
+    void authService.logout(deviceToken, staleToken).catch(() => {});
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
  * Persisted "remember me" profile. `identifier` is what pre-fills the
  * login form; `firstName` / `avatarUrl` are NON-SECRET display fields
  * used only to personalize the login screen ("Welcome back, Juan").
@@ -324,6 +362,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   clearBiometricSession: async () => {
+    // Read before it's removed: the server is told to end THIS session.
+    const staleToken = await secureStorage.get('auth_token').catch(() => null);
     await Promise.all([
       secureStorage.remove('auth_token'),
       secureStorage.remove('biometric_enabled'),
@@ -335,6 +375,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       biometricEnabled: false,
       biometricLockPending: false,
     });
+    releaseDroppedSession(staleToken);
   },
 
   logout: async () => {
@@ -365,89 +406,106 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   loadFromStorage: async () => {
     set({ isLoading: true });
-    const [
-      rawToken,
-      onboardingSeen,
-      runnerSkipped,
-      rememberedRaw,
-      biometricRaw,
-      sessionRaw,
-      snapshotRaw,
-      lastAccountId,
-    ] = await Promise.all([
-      secureStorage.get('auth_token'),
-      AsyncStorage.getItem('@onboarding_seen'),
-      AsyncStorage.getItem('@runner_onboarding_skipped'),
-      secureStorage.get('remembered_credentials'),
-      secureStorage.get('biometric_enabled'),
-      secureStorage.get('session_persistent'),
-      // Read in the SAME parallel batch as everything else, so hydrating the
-      // user costs no extra boot latency.
-      AsyncStorage.getItem(USER_SNAPSHOT_KEY).catch(() => null),
-      AsyncStorage.getItem(LAST_ACCOUNT_KEY).catch(() => null),
-    ]);
+    try {
+      const [
+        rawToken,
+        onboardingSeen,
+        runnerSkipped,
+        rememberedRaw,
+        biometricRaw,
+        sessionRaw,
+        snapshotRaw,
+        lastAccountId,
+      ] = await Promise.all([
+        secureStorage.get('auth_token'),
+        AsyncStorage.getItem('@onboarding_seen'),
+        AsyncStorage.getItem('@runner_onboarding_skipped'),
+        secureStorage.get('remembered_credentials'),
+        secureStorage.get('biometric_enabled'),
+        secureStorage.get('session_persistent'),
+        // Read in the SAME parallel batch as everything else, so hydrating the
+        // user costs no extra boot latency.
+        AsyncStorage.getItem(USER_SNAPSHOT_KEY).catch(() => null),
+        AsyncStorage.getItem(LAST_ACCOUNT_KEY).catch(() => null),
+      ]);
 
-    // "Remember me" gate. `session_persistent === 'false'` means the last
-    // login was session-only, so a fresh cold start (the app was fully
-    // closed) must sign the user out. An ABSENT flag defaults to persistent
-    // so pre-existing installs / tokens saved before this shipped aren't
-    // logged out unexpectedly.
-    let token = rawToken;
-    if (token && sessionRaw === 'false') {
-      await secureStorage.remove('auth_token');
-      await secureStorage.remove('session_persistent');
-      token = null;
+      // "Remember me" gate. `session_persistent === 'false'` means the last
+      // login was session-only, so a fresh cold start (the app was fully
+      // closed) must sign the user out. An ABSENT flag defaults to persistent
+      // so pre-existing installs / tokens saved before this shipped aren't
+      // logged out unexpectedly.
+      let token = rawToken;
+      if (token && sessionRaw === 'false') {
+        await secureStorage.remove('auth_token');
+        await secureStorage.remove('session_persistent');
+        token = null;
+        // Not only on this phone: end the sign-in on the server too and drop
+        // the account's state here, offline write queue included.
+        releaseDroppedSession(rawToken);
+      }
+      let rememberedCredentials: RememberedCredentials | null = null;
+      if (rememberedRaw) {
+        try {
+          const parsed = JSON.parse(rememberedRaw);
+          // Backwards compat: silently drop any legacy stored password.
+          if (parsed?.identifier) {
+            rememberedCredentials = {
+              identifier: String(parsed.identifier),
+              firstName: parsed.firstName ? String(parsed.firstName) : undefined,
+              avatarUrl: parsed.avatarUrl ? String(parsed.avatarUrl) : undefined,
+            };
+          }
+        } catch {}
+      }
+      // Biometric gate: when the user has opted into Face ID / fingerprint
+      // unlock AND a session token is persisted, WITHHOLD authentication
+      // from state (token stays in secureStorage so API calls still carry
+      // it) until the login screen passes a biometric check. This turns the
+      // normal "auto-login" cold start into a locked one. If the token was
+      // cleared (e.g. a 401 wiped it), there's nothing to replay: lockPending
+      // is false, the unlock button is hidden, and password login applies.
+      const biometricEnabled = biometricRaw === 'true';
+      const biometricLockPending = biometricEnabled && !!token;
+      // Hydrate the boot snapshot ONLY for a session we're actually restoring —
+      // never behind a withheld biometric lock, and never for a "remember me =
+      // off" start whose token we just dropped. Cross-checked against the
+      // resident-account marker so a snapshot can't outlive its account.
+      // Without this, `role` stayed null until /user/profile answered and
+      // app/index.tsx held the branded splash on EVERY cold start.
+      const restoringSession = !!token && !biometricLockPending;
+      const snapshotUser = restoringSession ? parseUserSnapshot(snapshotRaw) : null;
+      const hydratedUser =
+        snapshotUser && (!lastAccountId || lastAccountId === snapshotUser.id)
+          ? snapshotUser
+          : null;
+      set({
+        // Only ever ADD the cached identity — never null out a user that a
+        // concurrent sign-in may already have set.
+        ...(hydratedUser
+          ? { user: hydratedUser, role: hydratedUser.role, userIsProvisional: true }
+          : {}),
+        token: biometricLockPending ? null : token,
+        isAuthenticated: biometricLockPending ? false : !!token,
+        onboardingSeen: onboardingSeen === 'true',
+        runnerOnboardingSkipped: runnerSkipped === 'true',
+        rememberedCredentials,
+        biometricEnabled,
+        biometricLockPending,
+        isLoading: false,
+      });
+    } catch {
+      // The keychain or storage failed to answer. Start signed out rather
+      // than hold the splash forever: `isLoading` gates the splash and the
+      // root redirect, and a rejection here left it true for good. Signing
+      // in again writes a fresh token. `user` is left alone — only a
+      // concurrent sign-in could have set it.
+      set({
+        token: null,
+        isAuthenticated: false,
+        biometricLockPending: false,
+        isLoading: false,
+      });
     }
-    let rememberedCredentials: RememberedCredentials | null = null;
-    if (rememberedRaw) {
-      try {
-        const parsed = JSON.parse(rememberedRaw);
-        // Backwards compat: silently drop any legacy stored password.
-        if (parsed?.identifier) {
-          rememberedCredentials = {
-            identifier: String(parsed.identifier),
-            firstName: parsed.firstName ? String(parsed.firstName) : undefined,
-            avatarUrl: parsed.avatarUrl ? String(parsed.avatarUrl) : undefined,
-          };
-        }
-      } catch {}
-    }
-    // Biometric gate: when the user has opted into Face ID / fingerprint
-    // unlock AND a session token is persisted, WITHHOLD authentication
-    // from state (token stays in secureStorage so API calls still carry
-    // it) until the login screen passes a biometric check. This turns the
-    // normal "auto-login" cold start into a locked one. If the token was
-    // cleared (e.g. a 401 wiped it), there's nothing to replay: lockPending
-    // is false, the unlock button is hidden, and password login applies.
-    const biometricEnabled = biometricRaw === 'true';
-    const biometricLockPending = biometricEnabled && !!token;
-    // Hydrate the boot snapshot ONLY for a session we're actually restoring —
-    // never behind a withheld biometric lock, and never for a "remember me =
-    // off" start whose token we just dropped. Cross-checked against the
-    // resident-account marker so a snapshot can't outlive its account.
-    // Without this, `role` stayed null until /user/profile answered and
-    // app/index.tsx held the branded splash on EVERY cold start.
-    const restoringSession = !!token && !biometricLockPending;
-    const snapshotUser = restoringSession ? parseUserSnapshot(snapshotRaw) : null;
-    const hydratedUser =
-      snapshotUser && (!lastAccountId || lastAccountId === snapshotUser.id)
-        ? snapshotUser
-        : null;
-    set({
-      // Only ever ADD the cached identity — never null out a user that a
-      // concurrent sign-in may already have set.
-      ...(hydratedUser
-        ? { user: hydratedUser, role: hydratedUser.role, userIsProvisional: true }
-        : {}),
-      token: biometricLockPending ? null : token,
-      isAuthenticated: biometricLockPending ? false : !!token,
-      onboardingSeen: onboardingSeen === 'true',
-      runnerOnboardingSkipped: runnerSkipped === 'true',
-      rememberedCredentials,
-      biometricEnabled,
-      biometricLockPending,
-      isLoading: false,
-    });
   },
 
   updateProfile: (data) => {

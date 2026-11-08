@@ -58,10 +58,10 @@ const REFRESH_INTERVAL_MS = 25_000;
 const SUPPORT_NOTIFICATION_TYPES = ['support_reply', 'support_status'];
 
 /**
- * The api layer serves GETs from an 8s micro-cache, so a realtime kick that
- * lands right after a poll tick can read a pre-reply page. When that happens
- * we retry once just past the window instead of making the user wait out the
- * whole poll interval.
+ * The api layer shares an identical GET that is already in flight, so a
+ * realtime kick that lands during a poll tick can be answered by that tick's
+ * pre-reply page. When that happens we retry once a few seconds later instead
+ * of making the user wait out the whole poll interval.
  */
 const MICRO_CACHE_GRACE_MS = 8_500;
 
@@ -232,8 +232,8 @@ export default function SupportThreadScreen() {
       void (async () => {
         try {
           if (await refreshThread()) return;
-          // Nothing new came back — almost certainly the micro-cache. Try once
-          // more past its window; the poll stays the backstop either way.
+          // Nothing new came back — most likely an in-flight poll answered it.
+          // Try once more shortly; the poll stays the backstop either way.
           if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
           graceTimerRef.current = setTimeout(() => {
             graceTimerRef.current = null;

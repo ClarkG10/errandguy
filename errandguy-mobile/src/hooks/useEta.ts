@@ -47,10 +47,10 @@ function approxDistanceMeters(a: Point, b: Point): number {
  * against string inputs (Postgres `numeric` columns serialise as
  * strings unless explicitly cast).
  */
-function snap(n: unknown): string {
+function snap(n: unknown, digits = 3): string {
   const v = typeof n === 'number' ? n : Number(n);
   if (!Number.isFinite(v)) return 'NaN';
-  return v.toFixed(3);
+  return v.toFixed(digits);
 }
 
 function coercePoint(p: Point | null | undefined): Point | null {
@@ -102,10 +102,13 @@ export function useEta(
     return approxDistanceMeters(safeOrigin, safeDestination);
   }, [safeOrigin, safeDestination]);
 
-  // Snapped origin key drives refetch — destination is fixed per call site.
+  // Snapped origin key drives refetch as the runner moves. The destination is
+  // keyed at 4 decimals (~11 m), as route.service keys it: at 3 a next stop
+  // within the same ~110 m cell looked like the same destination, and the map
+  // kept drawing the previous leg's line.
   const originKey = safeOrigin ? `${snap(safeOrigin.lat)},${snap(safeOrigin.lng)}` : '';
   const destKey = safeDestination
-    ? `${snap(safeDestination.lat)},${snap(safeDestination.lng)}`
+    ? `${snap(safeDestination.lat, 4)},${snap(safeDestination.lng, 4)}`
     : '';
   const lastFetchedKeyRef = useRef<string>('');
 

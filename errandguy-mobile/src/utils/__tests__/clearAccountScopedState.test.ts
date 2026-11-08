@@ -88,3 +88,44 @@ describe('clearAccountScopedState — on-device PII', () => {
     getAllKeys.mockRestore();
   });
 });
+
+describe('clearAccountScopedState — in-memory money and messages', () => {
+  it('drops the wallet balance and transactions', async () => {
+    const { useWalletStore } = require('../../stores/walletStore');
+    useWalletStore.setState({
+      balance: 1520,
+      transactions: [{ id: 'tx-1', amount: 1520, balance_after: 1520 }],
+    });
+
+    await clearAccountScopedState();
+
+    expect(useWalletStore.getState().balance).toBe(0);
+    expect(useWalletStore.getState().transactions).toEqual([]);
+  });
+
+  it('drops loaded threads and the Messages badge', async () => {
+    const { useChatStore } = require('../../stores/chatStore');
+    useChatStore.setState({
+      messages: { 'bk-1': [{ id: 'm1', content: 'hi', created_at: '2026-01-01T00:00:00Z' }] },
+      unreadCount: 3,
+      unreadByBooking: { 'bk-1': 3 },
+    });
+
+    await clearAccountScopedState();
+
+    expect(useChatStore.getState().messages).toEqual({});
+    expect(useChatStore.getState().unreadCount).toBe(0);
+    expect(useChatStore.getState().unreadByBooking).toEqual({});
+  });
+
+  it("forgets which messages were already counted, so the next account's badge counts", async () => {
+    const { useChatStore } = require('../../stores/chatStore');
+    const message = { id: 'm-9', sender_id: 'other', read_at: null, created_at: '2026-01-01T00:00:00Z' };
+    useChatStore.getState().noteIncomingMessage('bk-1', message, 'me');
+
+    await clearAccountScopedState();
+    useChatStore.getState().noteIncomingMessage('bk-1', message, 'me');
+
+    expect(useChatStore.getState().unreadByBooking['bk-1']).toBe(1);
+  });
+});

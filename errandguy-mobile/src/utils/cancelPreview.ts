@@ -64,3 +64,34 @@ export function cancelReceiptMessage(res: unknown): string | null {
   const message = (res as { data?: { message?: unknown } } | null | undefined)?.data?.message;
   return typeof message === 'string' && message.trim() ? message : null;
 }
+
+/**
+ * Did a cancel that failed WITHOUT a verdict go through anyway?
+ *
+ * A client timeout, a dropped connection or a 5xx doesn't mean the server
+ * refused the cancel — it may have applied it and only the answer was lost.
+ * Saying "Couldn't cancel" then was wrong, and the customer's next try hit an
+ * errand that was already cancelled. So for those (never for a 4xx, which IS
+ * the server's answer) re-read the errand: true only when it now reads
+ * cancelled. A re-read that fails too is "no" — the caller says it failed, and
+ * the errand screen announces the cancellation when it does show up.
+ */
+export async function cancelAppliedAnyway(
+  err: unknown,
+  reread: () => Promise<{ status?: string } | null | undefined>,
+): Promise<boolean> {
+  const { status, kind } = (err ?? {}) as { status?: unknown; kind?: unknown };
+  const noVerdict =
+    status === 0 ||
+    status == null ||
+    (typeof status === 'number' && status >= 500) ||
+    kind === 'offline' ||
+    kind === 'timeout' ||
+    kind === 'server';
+  if (!noVerdict) return false;
+  try {
+    return (await reread())?.status === 'cancelled';
+  } catch {
+    return false;
+  }
+}

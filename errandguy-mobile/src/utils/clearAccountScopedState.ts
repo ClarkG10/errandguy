@@ -3,6 +3,8 @@ import { useBookingStore } from '../stores/bookingStore';
 import { usePaymentStore } from '../stores/paymentStore';
 import { usePreferencesStore } from '../stores/preferencesStore';
 import { useNotificationStore } from '../stores/notificationStore';
+import { useWalletStore } from '../stores/walletStore';
+import { useChatStore, __resetChatRealtimeBookkeeping } from '../stores/chatStore';
 import { CacheService } from '../services/cache.service';
 import { geocodingService } from '../services/geocoding.service';
 import { apiCache } from '../services/api';
@@ -64,6 +66,11 @@ const TRUSTED_CONTACTS_KEY = '@trusted_contacts_cache';
  *   • notificationStore — the in-memory Alerts rows and badge. They outlived a
  *     sign-out, so the next account saw the previous one's inbox (and its
  *     unread count) until its own first fetch replaced them.
+ *   • walletStore — balance and transactions. The next account briefly saw
+ *     the previous one's money, and could export it as CSV.
+ *   • chatStore — loaded threads and the Messages unread badge, plus the
+ *     realtime bookkeeping kept beside it (message ids already counted into
+ *     the badge).
  *   • runner mode — the GPS watch + heartbeat and the runner store (online
  *     flag, current errand, open offer, profile). A runner's tracking used to
  *     survive the sign-out and keep posting the previous account's location.
@@ -76,6 +83,15 @@ export async function clearAccountScopedState(): Promise<void> {
   usePaymentStore.getState().resolve();
   usePreferencesStore.getState().clearLastPaymentMethods();
   useNotificationStore.getState().clear();
+  useWalletStore.setState({ balance: 0, transactions: [], isLoading: false });
+  useChatStore.setState({
+    messages: {},
+    unreadCount: 0,
+    unreadByBooking: {},
+    typingByBooking: {},
+    openThreadId: null,
+  });
+  __resetChatRealtimeBookkeeping();
 
   // Cached network data + on-device PII (best-effort, never throws — a storage
   // failure must not be able to strand someone in a half-signed-out session).

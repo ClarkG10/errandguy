@@ -73,12 +73,19 @@ export const authService = {
    * Sign THIS phone out. `device_token` is the Expo push token, so the server
    * stops pushing this account's notifications to a phone nobody is signed in
    * on. Bounded: a sign-out must never hang on a dead network.
+   *
+   * `sessionToken` signs out a session the phone has already let go of
+   * locally (its token is no longer the one requests carry) — see
+   * authStore releaseDroppedSession.
    */
-  logout(deviceToken?: string | null) {
+  logout(deviceToken?: string | null, sessionToken?: string) {
     return api.post(
       '/auth/logout',
       deviceToken ? { device_token: deviceToken } : {},
-      { timeout: SIGN_OUT_TIMEOUT_MS },
+      {
+        timeout: SIGN_OUT_TIMEOUT_MS,
+        ...(sessionToken ? { headers: { Authorization: `Bearer ${sessionToken}` } } : null),
+      },
     );
   },
 
