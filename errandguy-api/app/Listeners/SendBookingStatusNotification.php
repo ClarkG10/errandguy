@@ -54,14 +54,19 @@ class SendBookingStatusNotification implements ShouldQueue
             '{refund}' => $this->refundClause($booking, $status),
             '{next}' => $this->nextStep($booking, $status),
             '{item_cash}' => self::itemCashLine($booking),
+            '{receipt}' => $status === 'completed' ? self::receiptLine($booking) : '',
+            '{runner_pay}' => $status === 'completed' ? self::runnerPayLine($booking) : '',
         ];
 
         // Quiet stages get the in-app row + live Reverb update, but no device
         // buzz. See SILENT_STATUSES — nothing is lost from the inbox or the
-        // tracking screen, only the interruption.
+        // tracking screen, only the interruption. They land already read: the
+        // customer is watching the errand move, and progress nobody was
+        // interrupted for shouldn't leave the unread badge at "9+" after one
+        // errand.
         $deliver = in_array($status, self::SILENT_STATUSES, true)
             ? fn (string $userId, string $title, string $body) => $this->notificationService
-                ->notifyInApp($userId, $title, $body, $data)
+                ->notifyInApp($userId, $title, $body, $data, read: true)
             : fn (string $userId, string $title, string $body) => $this->notificationService
                 ->sendPush($userId, $title, $body, $data);
 
@@ -154,25 +159,79 @@ class SendBookingStatusNotification implements ShouldQueue
      * "Buy for me": the runner pays for the items out of pocket and the
      * customer repays them in cash at the door, so the customer is told the
      * amount to have ready — what the runner reported paying, or, before they
-     * have, the budget the customer set.
+     * have, the budget the customer set. On a cash errand the fare is collected
+     * at the door too (the runner is told to collect both —
+     * BookingResource::amountToCollectFor), so it is in the amount: the item
+     * money alone left the customer short at the door.
      */
     private static function itemCashLine(Booking $booking): string
     {
+        $fare = ($booking->payment_method === 'cash' && $booking->payment_status !== 'paid')
+            ? round((float) $booking->total_amount, 2)
+            : 0.0;
+        $peso = fn (float $amount): string => '₱'.number_format($amount, 2);
+        $split = fn (string $items): string => $fare > 0 ? ' ('.$items.' for the items + '.$peso($fare).' fare)' : '';
+
         $paid = round((float) $booking->actual_item_cost, 2);
         if ($paid > 0) {
-            $amount = '₱'.number_format($paid, 2);
-
-            return "Your runner paid {$amount} for your items — please have {$amount} cash ready.";
+            return 'Your runner paid '.$peso($paid).' for your items — please have '
+                .$peso($paid + $fare).' cash ready'.$split($peso($paid)).'.';
         }
 
         $budget = round((float) $booking->shopping_budget, 2);
         if ($budget > 0) {
-            $amount = 'up to ₱'.number_format($budget, 2);
-
-            return "Your runner paid {$amount} for your items — please have {$amount} cash ready.";
+            return 'Your runner paid up to '.$peso($budget).' for your items — please have up to '
+                .$peso($budget + $fare).' cash ready'.$split('up to '.$peso($budget)).'.';
         }
 
-        return 'Your runner paid for your items — please have the cash ready to repay them.';
+        return 'Your runner paid for your items — please have the cash ready to repay them'
+            .($fare > 0 ? ', plus the '.$peso($fare).' fare.' : '.');
+    }
+
+    /**
+     * The fare and how it was paid, for the customer's "completed" notice.
+     * Empty when it wasn't settled (an online payment that never came through)
+     * — nothing true to say about money there.
+     */
+    private static function receiptLine(Booking $booking): string
+    {
+        $how = match (true) {
+            $booking->payment_method === 'cash' => 'paid in cash',
+            $booking->payment_status !== 'paid' => null,
+            $booking->payment_method === 'wallet' => 'paid from your ErrandGuy wallet',
+            $booking->payment_method === 'gcash' => 'paid by GCash',
+            $booking->payment_method === 'maya' => 'paid by Maya',
+            default => 'paid',
+        };
+
+        return $how === null
+            ? ''
+            : ' The fare was ₱'.number_format((float) $booking->total_amount, 2).", {$how}.";
+    }
+
+    /**
+     * What completing the errand did for the runner — read from the ledger
+     * BookingSettlementService::settleCompletion just wrote, so it names what
+     * actually moved. "Payment will be processed" was true for none of the
+     * three outcomes.
+     */
+    private static function runnerPayLine(Booking $booking): string
+    {
+        $entry = \App\Models\WalletTransaction::where('user_id', $booking->runner_id)
+            ->where('reference_id', $booking->id)
+            ->whereIn('type', ['earning', 'commission'])
+            ->first();
+        $peso = fn (float $amount): string => '₱'.number_format(abs($amount), 2);
+
+        return match ($entry?->type) {
+            'earning' => $peso((float) $entry->amount).' was added to your ErrandGuy wallet.',
+            'commission' => 'You keep the fare you collected in cash; ErrandGuy’s '
+                .$peso((float) $entry->amount).' fee was taken from your wallet.',
+            // settleCompletion credits nothing until the customer's payment
+            // lands; backfillRunnerEarning adds it when it does.
+            default => 'The customer’s payment hasn’t come through yet — your '
+                .$peso((float) $booking->runner_payout).' is added to your wallet as soon as it does.',
+        };
     }
 
     /**
@@ -213,7 +272,7 @@ class SendBookingStatusNotification implements ShouldQueue
                 'customer' => ['title' => 'At the front', 'body' => 'Your runner has reached the front of the line.'],
             ],
             'completed' => [
-                'customer' => ['title' => 'All done', 'body' => 'Your queue errand #{number} is complete.'],
+                'customer' => ['title' => 'All done', 'body' => 'Your queue errand #{number} is complete.{receipt}'],
             ],
         ],
     ];
@@ -231,12 +290,10 @@ class SendBookingStatusNotification implements ShouldQueue
      * "Booking #x has been cancelled").
      */
     private const TEMPLATES = [
-        'matched' => [
-            'customer' => [
-                'title' => 'Runner found',
-                'body' => 'A runner has been matched for errand #{number}.',
-            ],
-        ],
+        // No 'matched' notice: it is only an offer the runner may decline (an
+        // errand can be offered to several runners in turn), so "Runner found"
+        // rows piled up before "No runner available". The customer hears when a
+        // runner accepts.
         'accepted' => [
             'customer' => [
                 'title' => 'Runner assigned',
@@ -286,11 +343,11 @@ class SendBookingStatusNotification implements ShouldQueue
         'completed' => [
             'customer' => [
                 'title' => 'Errand completed',
-                'body' => 'Your errand #{number} has been completed.',
+                'body' => 'Your errand #{number} has been completed.{receipt}',
             ],
             'runner' => [
                 'title' => 'Errand completed',
-                'body' => 'Errand #{number} completed. Payment will be processed.',
+                'body' => 'Errand #{number} completed. {runner_pay}',
             ],
         ],
         // Matching exhausted every candidate. MatchRunnerJob already sets the

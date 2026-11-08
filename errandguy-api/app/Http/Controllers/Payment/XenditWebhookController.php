@@ -70,7 +70,7 @@ class XenditWebhookController extends Controller
                 // Payouts (Xendit Payouts v2). Success marks the payout
                 // completed; failure/reversal re-credits the wallet.
                 'payout.succeeded' => $this->handlePayoutSucceeded($data),
-                'payout.failed', 'payout.reversed' => $this->handlePayoutFailed($data),
+                'payout.failed', 'payout.reversed' => $this->handlePayoutFailed($data, $event === 'payout.reversed'),
                 default => null,
             };
         } else {
@@ -130,6 +130,31 @@ class XenditWebhookController extends Controller
     /** Raise (once per payout) the staff alert for a payout paid after it was failed. */
     private function alertPaidAfterFailed(\App\Models\WalletTransaction $tx, array $data): void
     {
+        // A late redelivery of an old "succeeded" (ours failed, Xendit retried)
+        // for a payout the bank has since REVERSED is not a second payment:
+        // ask Xendit where it stands now, and stand down only when it says the
+        // money did not stay paid. A false "paid twice" would have staff claw
+        // back money the person is owed. Any other answer, or none, alarms.
+        $gatewayId = (string) ($data['id'] ?? $tx->gateway_ref ?? '');
+        if ($gatewayId !== '') {
+            try {
+                $current = strtoupper((string) (app(\App\Services\PaymentService::class)->getPayout($gatewayId)['status'] ?? ''));
+                if (in_array($current, ['REVERSED', 'FAILED', 'CANCELLED'], true)) {
+                    Log::info('Stale payout.succeeded for a payout Xendit now reports as '.$current.' — not paid twice', [
+                        'wallet_tx' => $tx->id,
+                        'gateway_payout' => $gatewayId,
+                    ]);
+
+                    return;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Could not confirm a paid-after-failed payout with Xendit; alerting anyway', [
+                    'wallet_tx' => $tx->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         if (! \Illuminate\Support\Facades\Cache::add("payout_paid_after_failed:{$tx->id}", true, now()->addDays(7))) {
             return;
         }
@@ -155,7 +180,7 @@ class XenditWebhookController extends Controller
         );
     }
 
-    private function handlePayoutFailed(array $data): void
+    private function handlePayoutFailed(array $data, bool $reversal = false): void
     {
         $tx = $this->findPayoutTransaction($data);
         if (! $tx) {
@@ -191,8 +216,46 @@ class XenditWebhookController extends Controller
                 $wallet->notifyPayoutBounced($updated, (string) $reason);
             }
         } catch (\App\Exceptions\PayoutStateException) {
-            // Raced to a terminal state by another delivery — no-op.
+            // The status read above isn't locked: a racing payout.succeeded can
+            // complete the payout between that read and failPayout's own locked
+            // check. Swallowing that lost a REVERSAL for good — the money came
+            // back to us, the person stayed debited, and nothing swept it.
+            $this->settleAfterRace($tx, (string) $reason, $reversal);
         }
+    }
+
+    /**
+     * A failure/reversal that lost a race to another delivery: re-read the
+     * payout and settle what the event still means for its new state.
+     */
+    private function settleAfterRace(\App\Models\WalletTransaction $tx, string $reason, bool $reversal): void
+    {
+        $fresh = $tx->fresh();
+        if ($fresh?->status !== 'completed') {
+            return; // already failed/reversed by the other delivery — nothing left to do
+        }
+
+        $wallet = app(\App\Services\WalletService::class);
+        if ($reversal) {
+            try {
+                $wallet->notifyPayoutBounced($wallet->reversePayout($fresh->id, $reason), $reason);
+            } catch (\App\Exceptions\PayoutStateException) {
+                // Reversed by yet another delivery meanwhile.
+            }
+
+            return;
+        }
+
+        // "Failed" for a payout Xendit also reported as paid: contradictory.
+        // Moving money either way could be wrong, so a person checks Xendit.
+        \App\Models\AdminAlert::raise(
+            'payout_failed_after_paid',
+            'critical',
+            'Payout reported failed after it was marked paid',
+            'Xendit reported a ₱'.number_format(abs((float) $fresh->amount), 2).' payout as failed ('.$reason
+                .') just after confirming it paid. Check it in Xendit; if it was not paid, credit the amount back with a wallet adjustment on their page.',
+            $fresh->id,
+        );
     }
 
     /**

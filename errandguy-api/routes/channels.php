@@ -51,7 +51,9 @@ Broadcast::channel('booking.{bookingId}', function (User $user, string $bookingI
 Broadcast::channel('chat.{bookingId}', function (User $user, string $bookingId) {
     $booking = Booking::find($bookingId);
 
+    // A runner joins the chat on accepting, not on being offered the errand
+    // (ChatController::authorizeBookingParticipant).
     return $booking
         && ((string) $user->id === (string) $booking->customer_id
-            || (string) $user->id === (string) $booking->runner_id);
+            || ((string) $user->id === (string) $booking->runner_id && $booking->accepted_at !== null));
 });

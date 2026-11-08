@@ -196,6 +196,27 @@ class NotifySosContactsJobTest extends TestCase
         $notifications->shouldNotHaveReceived('notifyInApp');
     }
 
+    public function test_rounds_the_provider_refused_do_not_use_up_the_day(): void
+    {
+        Mail::fake();
+        $this->staffRecipients();
+        // An SMS outage or credit run out: the provider answers "failed" for
+        // every number (a result, not an exception).
+        $down = new FakeSmsSender(configured: true, reject: ['+639170000001', '09170000002']);
+        foreach (range(1, NotifySosContactsJob::CONTACT_TEXT_ROUNDS_PER_DAY) as $_) {
+            $alert = $this->alert();
+            (new NotifySosContactsJob($alert->id))->handle($down);
+            $alert->update(['status' => 'cancelled']);
+        }
+
+        // Nothing went out, so nothing was used up: the next real SOS still
+        // texts the contacts, and the app doesn't claim they were texted.
+        $this->assertSame(0, (int) \Illuminate\Support\Facades\Cache::get(NotifySosContactsJob::contactRoundsKey($this->customer->id)));
+        $alert = $this->alert();
+        (new NotifySosContactsJob($alert->id))->handle(new FakeSmsSender(configured: true));
+        $this->assertSame([$this->mom->id, $this->dad->id], $alert->fresh()->contacts_notified);
+    }
+
     public function test_only_contacts_the_provider_accepted_are_recorded_and_the_rest_are_flagged(): void
     {
         Mail::fake();

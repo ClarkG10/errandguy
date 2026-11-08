@@ -58,6 +58,14 @@ class CreateBookingRequest extends FormRequest
                 // Not a date: validation says so.
             }
         }
+
+        // No vehicle sent books a motorcycle (BookingController). Fill it in
+        // here so the withdrawn-vehicle check below sees it too — a request
+        // that left the field out skipped the check and was priced on a
+        // withdrawn (₱0/km) rate.
+        if (blank($this->input('vehicle_type_rate'))) {
+            $this->merge(['vehicle_type_rate' => 'motorcycle']);
+        }
     }
 
     public function rules(): array

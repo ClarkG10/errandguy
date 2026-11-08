@@ -34,7 +34,7 @@ class MessageTest extends TestCase
         $this->booking = Booking::create([
             'booking_number' => 'EG-20260331-CHAT',
             'customer_id' => $this->customer->id, 'runner_id' => $this->runner->id,
-            'errand_type_id' => $errandType->id, 'status' => 'accepted',
+            'errand_type_id' => $errandType->id, 'status' => 'accepted', 'accepted_at' => now(),
             'pickup_address' => '123 Main', 'pickup_lat' => 14.60, 'pickup_lng' => 120.98,
             'dropoff_address' => '456 Oak', 'dropoff_lat' => 14.55, 'dropoff_lng' => 121.02,
             'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',

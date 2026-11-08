@@ -89,6 +89,7 @@ class AppServiceProvider extends ServiceProvider
                 $event->job->resolveName(),
                 $event->exception->getMessage(),
                 $event->connectionName,
+                isBroadcast: ($event->job->payload()['data']['commandName'] ?? null) === \Illuminate\Broadcasting\BroadcastEvent::class,
             );
         });
 

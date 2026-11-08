@@ -137,4 +137,41 @@ class RunnerVisibilityBeforeAcceptTest extends TestCase
         $conversations = $this->actingAs($this->customer)->getJson('/api/v1/chat/conversations')->assertOk();
         $this->assertStringNotContainsString('Rhea Runner', $conversations->getContent());
     }
+
+    public function test_an_offered_runner_is_not_in_the_chat_until_they_accept(): void
+    {
+        $this->customer->update(['full_name' => 'Carla Customer']);
+        \App\Models\Message::create([
+            'booking_id' => $this->booking->id, 'sender_id' => $this->customer->id,
+            'content' => 'Gate code is 4471, unit 12B',
+        ]);
+        $id = $this->booking->id;
+
+        // Offered only: no history, no sending (which would push the
+        // customer the runner's name), no inbox row naming the customer, no
+        // unread count, and no live chat channel.
+        $this->actingAs($this->runner)->getJson("/api/v1/chat/{$id}/messages")->assertForbidden();
+        $this->actingAs($this->runner)->postJson("/api/v1/chat/{$id}/messages", ['content' => 'hi'])->assertForbidden();
+        $this->actingAs($this->runner)->postJson("/api/v1/chat/{$id}/read")->assertForbidden();
+        $inbox = $this->actingAs($this->runner)->getJson('/api/v1/chat/conversations')->assertOk();
+        $this->assertStringNotContainsString('Carla Customer', $inbox->getContent());
+        $this->assertStringNotContainsString('4471', $inbox->getContent());
+        $this->assertSame(0, $this->actingAs($this->runner)->getJson('/api/v1/chat/unread-count')->json('data.total'));
+        $this->assertFalse($this->canJoinChatChannel());
+
+        // Accepted: they're in.
+        $this->booking->update(['status' => 'accepted', 'accepted_at' => now()]);
+        $this->actingAs($this->runner)->getJson("/api/v1/chat/{$id}/messages")->assertOk()->assertSee('4471');
+        $this->assertStringContainsString('Carla Customer',
+            $this->actingAs($this->runner)->getJson('/api/v1/chat/conversations')->getContent());
+        $this->assertSame(1, $this->actingAs($this->runner)->getJson('/api/v1/chat/unread-count')->json('data.total'));
+        $this->assertTrue($this->canJoinChatChannel());
+    }
+
+    private function canJoinChatChannel(): bool
+    {
+        $channels = (fn () => $this->channels)->call(\Illuminate\Support\Facades\Broadcast::driver());
+
+        return (bool) $channels['chat.{bookingId}']($this->runner->fresh(), (string) $this->booking->id);
+    }
 }

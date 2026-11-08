@@ -274,7 +274,10 @@ class BookingResource extends JsonResource
                 $this->relationLoaded('statusLogs'),
                 fn () => $this->statusLogs->map(fn ($log) => [
                     'status' => $log->status,
-                    'note' => $log->note,
+                    // Offer notes from before offers stopped naming the runner
+                    // ("Runner matched: Juan Dela Cruz") would still show a
+                    // customer the name of a runner who never accepted.
+                    'note' => str_starts_with((string) $log->note, 'Runner matched: ') ? 'Offered to a runner' : $log->note,
                     'created_at' => $log->created_at,
                 ]),
             ),

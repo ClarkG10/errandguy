@@ -206,9 +206,7 @@ class ChatController extends Controller
 
         // Active bookings the user is a participant of.
         $bookingIds = Booking::query()
-            ->where(function ($q) use ($userId) {
-                $q->where('customer_id', $userId)->orWhere('runner_id', $userId);
-            })
+            ->where(fn ($q) => self::chatParticipant($q, $userId))
             ->whereNotIn('status', BookingStatus::ENDED)
             ->pluck('id');
 
@@ -251,9 +249,7 @@ class ChatController extends Controller
         $userId = $request->user()->id;
 
         $bookings = Booking::query()
-            ->where(function ($q) use ($userId) {
-                $q->where('customer_id', $userId)->orWhere('runner_id', $userId);
-            })
+            ->where(fn ($q) => self::chatParticipant($q, $userId))
             ->with([
                 'customer:id,full_name,avatar_url',
                 'runner:id,full_name,avatar_url',
@@ -360,10 +356,27 @@ class ChatController extends Controller
         return response()->json(['data' => $items]);
     }
 
+    /**
+     * A runner joins an errand's chat when they ACCEPT it, not when it is
+     * offered to them: an offer (runner_id set, accepted_at null) is only a
+     * question, and the customer's name, their messages — on a rescued errand,
+     * everything they told the previous runner — and a push carrying the
+     * runner's name all stay out of reach until then (as in BookingResource).
+     */
     private function authorizeBookingParticipant($user, Booking $booking): void
     {
-        if ($user->id !== $booking->customer_id && $user->id !== $booking->runner_id) {
+        $isCustomer = $user->id === $booking->customer_id;
+        $isRunner = $user->id === $booking->runner_id && $booking->accepted_at !== null;
+
+        if (! $isCustomer && ! $isRunner) {
             abort(403, 'You are not a participant of this booking.');
         }
+    }
+
+    /** Bookings whose chat the user is in: theirs, or ones they accepted. */
+    private static function chatParticipant($query, string $userId): void
+    {
+        $query->where('customer_id', $userId)
+            ->orWhere(fn ($q) => $q->where('runner_id', $userId)->whereNotNull('accepted_at'));
     }
 }

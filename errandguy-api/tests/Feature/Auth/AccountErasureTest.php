@@ -381,6 +381,54 @@ class AccountErasureTest extends TestCase
         $this->assertSame('Bananas were sold out', \App\Models\BookingStatusLog::where('booking_id', $booking->id)->value('note'));
     }
 
+    public function test_erasure_never_deletes_files_a_message_link_points_at_outside_its_own_chat(): void
+    {
+        Storage::fake('media');
+        Storage::fake('public');
+        $runner = User::factory()->create(['role' => 'runner', 'status' => 'active', 'wallet_balance' => 0, 'full_name' => 'Juan Dela Cruz']);
+        RunnerProfile::create(['user_id' => $runner->id, 'verification_status' => 'approved', 'preferred_types' => []]);
+        $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $booking = $this->makeBooking(['customer_id' => $customer->id, 'runner_id' => $runner->id, 'accepted_at' => now()]);
+        $other = $this->makeBooking(['customer_id' => $customer->id]);
+
+        // Before chat images were made by the server, a message's link was
+        // whatever the app sent: it could name someone else's avatar or
+        // another errand's proof photo.
+        Storage::disk('public')->put('avatars/victim.jpg', 'x');
+        Storage::disk('media')->put("booking-photos/{$other->id}/proof.jpg", 'x');
+        Storage::disk('media')->put("chat-images/{$other->id}/theirs.jpg", 'x');
+        foreach ([
+            Storage::disk('public')->url('avatars/victim.jpg'),
+            route('booking.media', ['path' => "booking-photos/{$other->id}/proof.jpg"]),
+            route('booking.media', ['path' => "chat-images/{$other->id}/theirs.jpg"]),
+            'https://api.example.test/storage/../../.env',
+        ] as $url) {
+            \App\Models\Message::create(['booking_id' => $booking->id, 'sender_id' => $runner->id, 'image_url' => $url]);
+        }
+
+        // Another runner with the same name keeps his own errand notes.
+        $namesake = User::factory()->create(['role' => 'runner', 'status' => 'active', 'full_name' => 'Juan Dela Cruz']);
+        \App\Models\BookingStatusLog::create(['booking_id' => $other->id, 'status' => 'accepted', 'changed_by' => $namesake->id, 'note' => 'Accepted by runner Juan Dela Cruz']);
+
+        $this->actingAs($runner)->deleteJson('/api/v1/user/account')->assertOk();
+
+        Storage::disk('public')->assertExists('avatars/victim.jpg');
+        Storage::disk('media')->assertExists("booking-photos/{$other->id}/proof.jpg");
+        Storage::disk('media')->assertExists("chat-images/{$other->id}/theirs.jpg");
+        $this->assertSame('Accepted by runner Juan Dela Cruz', \App\Models\BookingStatusLog::where('booking_id', $other->id)->value('note'));
+    }
+
+    public function test_old_offer_notes_never_name_the_runner_to_the_customer(): void
+    {
+        $customer = User::factory()->create(['role' => 'customer', 'status' => 'active']);
+        $booking = $this->makeBooking(['customer_id' => $customer->id, 'status' => 'cancelled']);
+        \App\Models\BookingStatusLog::create(['booking_id' => $booking->id, 'status' => 'matched', 'note' => 'Runner matched: Pedro Penduko']);
+
+        $body = $this->actingAs($customer)->getJson("/api/v1/bookings/{$booking->id}")->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('Pedro Penduko', $body);
+    }
+
     public function test_only_super_admins_and_admins_can_erase(): void
     {
         $user = User::factory()->create(['role' => 'customer', 'status' => 'active', 'wallet_balance' => 0]);
@@ -406,5 +454,20 @@ class AccountErasureTest extends TestCase
         $alert = \App\Models\AdminAlert::where('type', 'credit_to_deleted_account')->sole();
         $this->assertSame('critical', $alert->severity);
         $this->assertStringContainsString('₱115.00', $alert->body);
+    }
+
+    public function test_a_refund_of_a_late_charge_into_an_erased_wallet_also_raises_the_alert(): void
+    {
+        $user = User::factory()->create(['role' => 'customer', 'status' => 'active', 'wallet_balance' => 0]);
+        $this->actingAs($user)->deleteJson('/api/v1/user/account')->assertOk();
+
+        // The refund path for a charge approved on a cancelled errand
+        // (refundChargeOnCancelledBooking) credits through refund(), which
+        // raised nothing.
+        app(\App\Services\WalletService::class)->refund($user->id, 95, 'late-charge-1');
+
+        $alert = \App\Models\AdminAlert::where('type', 'credit_to_deleted_account')->sole();
+        $this->assertStringContainsString('₱95.00', $alert->body);
+        $this->assertEquals(95.0, (float) User::withTrashed()->find($user->id)->wallet_balance);
     }
 }

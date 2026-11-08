@@ -91,13 +91,19 @@ class AccountErasureService
         // Photos they sent in chats. Their messages' links are cleared below,
         // and the 30-day chat cleanup only removes a chat's photo folder while
         // some message still links a photo — so delete these files here.
+        // Only a photo in THAT chat's own folder: before chat images were
+        // server-made, a message's link was whatever the app sent, so a link
+        // could name someone else's avatar or another errand's proof photo.
         $mediaFiles = [];
-        foreach (Message::where('sender_id', $user->id)->whereNotNull('image_url')->pluck('image_url') as $url) {
-            $path = self::mediaDiskPath((string) $url);
-            if ($path !== null) {
-                $mediaFiles[] = $path;
-            } else {
-                $publicFiles[] = self::publicDiskPath((string) $url); // pre-private-disk photos
+        $messages = Message::where('sender_id', $user->id)->whereNotNull('image_url')->get(['booking_id', 'image_url']);
+        foreach ($messages as $message) {
+            $folder = 'chat-images/'.$message->booking_id.'/';
+            $private = self::mediaDiskPath((string) $message->image_url);
+            $public = self::publicDiskPath((string) $message->image_url); // pre-private-disk photos
+            if ($private !== null && str_starts_with($private, $folder)) {
+                $mediaFiles[] = $private;
+            } elseif ($private === null && self::isChatImagePath($public, $folder)) {
+                $publicFiles[] = $public;
             }
         }
 
@@ -177,10 +183,18 @@ class AccountErasureService
                 // customer's or staff member's own words are never edited, and
                 // on any errand: an offer they declined no longer carries them
                 // as its runner.
+                // Scoped to rows that are theirs — the accept is logged under
+                // their id, and an offer note under an errand they ran — so a
+                // different runner with the same name is never touched, and the
+                // update uses an index instead of scanning (and on MySQL
+                // locking) the whole status log. Offers they only declined
+                // aren't named to customers (BookingResource rewrites them).
                 if ($name !== '') {
-                    BookingStatusLog::where('note', 'Accepted by runner '.$name)
+                    BookingStatusLog::where('changed_by', $user->id)
+                        ->where('note', 'Accepted by runner '.$name)
                         ->update(['note' => 'Accepted by runner '.self::ERASED_NAME]);
-                    BookingStatusLog::where('note', 'Runner matched: '.$name)
+                    BookingStatusLog::whereIn('booking_id', Booking::where('runner_id', $user->id)->select('id'))
+                        ->where('note', 'Runner matched: '.$name)
                         ->update(['note' => 'Offered to a runner']);
                 }
             }
@@ -262,14 +276,18 @@ class AccountErasureService
         }
 
         // Remove the collected PII files from disk (best-effort, post-commit).
-        foreach (array_filter($publicFiles) as $path) {
-            Storage::disk('public')->delete($path);
-        }
-        foreach (array_filter($kycFiles) as $path) {
-            Storage::disk('kyc')->delete($path);
-        }
-        foreach ($mediaFiles as $path) {
-            Storage::disk('media')->delete($path);
+        // One bad path (a legacy link with "../" makes the disk throw) must not
+        // stop the others, or the staff audit entry below.
+        foreach ([['public', array_filter($publicFiles)], ['kyc', array_filter($kycFiles)], ['media', $mediaFiles]] as [$disk, $paths]) {
+            foreach ($paths as $path) {
+                try {
+                    Storage::disk($disk)->delete($path);
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('Account erasure: a file could not be deleted', [
+                        'user_id' => $user->id, 'disk' => $disk, 'error' => $e->getMessage(),
+                    ]);
+                }
+            }
         }
 
         if ($staff !== null) {
@@ -288,6 +306,14 @@ class AccountErasureService
         return Booking::where(fn ($q) => $q->where('customer_id', $userId)->orWhere('runner_id', $userId))
             ->whereNotIn('status', BookingStatus::ENDED)
             ->exists();
+    }
+
+    /** A public-disk path that is a photo directly in the given chat-images/{booking}/ folder. */
+    private static function isChatImagePath(?string $path, string $folder): bool
+    {
+        return $path !== null
+            && str_starts_with($path, $folder)
+            && preg_match('#^chat-images/[0-9a-fA-F-]{36}/[A-Za-z0-9._-]+$#', $path) === 1;
     }
 
     /** The private media-disk path behind a booking media URL (…/internal/media/{path}), or null. */

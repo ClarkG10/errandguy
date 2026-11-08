@@ -21,8 +21,10 @@ class NotificationService
         // notifyInApp) — it reaches the app live over the
         // `notifications.{userId}` Reverb channel even for users who never
         // granted push permission. The remote device push is a best-effort extra.
-        $this->notifyInApp($userId, $title, $body, $data);
-        $this->sendRemotePush($userId, $title, $body, $data);
+        $row = $this->notifyInApp($userId, $title, $body, $data);
+        // The row's id rides on the push so tapping it marks the row read —
+        // otherwise every push the user followed stayed unread in the inbox.
+        $this->sendRemotePush($userId, $title, $body, $data + ['notification_id' => (string) $row->id]);
     }
 
     /**
@@ -87,7 +89,7 @@ class NotificationService
      * so route them through here instead.
      * sendPush() layers a remote push on top of this.
      */
-    public function notifyInApp(string $userId, string $title, string $body, array $data = []): Notification
+    public function notifyInApp(string $userId, string $title, string $body, array $data = [], bool $read = false): Notification
     {
         $notification = Notification::create([
             'user_id' => $userId,
@@ -97,7 +99,7 @@ class NotificationService
             'body' => $body,
             'type' => $data['type'] ?? 'system',
             'data' => $data,
-            'is_read' => false,
+            'is_read' => $read,
         ]);
 
         // Queued broadcast — mirrors what the old `notifications` table

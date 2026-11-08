@@ -95,6 +95,28 @@ class PayoutFailureNotificationTest extends TestCase
         $this->assertSame(1, Notification::where('user_id', $this->runner->id)->count());
     }
 
+    public function test_a_gateway_code_becomes_plain_words_with_the_right_next_step(): void
+    {
+        $advice = fn (string $reason) => \App\Services\WalletService::payoutBounceAdvice($reason);
+
+        // ErrandGuy's own Xendit balance ran short: not the runner's details.
+        $ours = $advice('INSUFFICIENT_BALANCE');
+        $this->assertStringNotContainsString('INSUFFICIENT_BALANCE', $ours);
+        $this->assertStringNotContainsString('Check your payout details', $ours);
+        $this->assertStringContainsString('wasn’t a problem with your details', $ours);
+
+        // A wrong account is theirs to fix.
+        $this->assertStringContainsString('Check your payout details', $advice('INVALID_DESTINATION'));
+        $this->assertStringNotContainsString('INVALID_DESTINATION', $advice('INVALID_DESTINATION'));
+
+        // An unknown code is never shown raw; a reversal status reads in words.
+        $this->assertStringNotContainsString('SOMETHING_NEW', $advice('SOMETHING_NEW'));
+        $this->assertStringNotContainsString('REVERSED', $advice('REVERSED'));
+
+        // What staff typed is passed on as written.
+        $this->assertSame('Reason: Account name mismatch. Check your payout details, then request it again.', $advice('Account name mismatch'));
+    }
+
     public function test_a_reversed_payout_is_announced_as_returned_not_as_failed(): void
     {
         // The webhook-driven `payout.reversed` state (a payout that had already

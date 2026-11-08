@@ -87,17 +87,29 @@ class WalletService
         // by anyone, and nothing else would say it happened. Committed with
         // the credit itself, so a rolled-back credit leaves no alert.
         if ($delta > 0 && method_exists($user, 'trashed') && $user->trashed()) {
-            AdminAlert::raise(
-                'credit_to_deleted_account',
-                'critical',
-                'Money credited to a deleted account',
-                '₱'.number_format($delta, 2)." ({$type}) went into an erased account's wallet. "
-                    .'Send it to the account on their deletion payout, or back to whoever paid it.',
-                $transaction->id,
-            );
+            self::alertCreditToErasedAccount($delta, $type, $transaction->id);
         }
 
         return $transaction;
+    }
+
+    /**
+     * Money landed in an erased account's wallet: nobody can see or withdraw
+     * it, and the panel can't move money out of an erased account, so staff
+     * pay it out by hand. Raised inside the credit's transaction, so a credit
+     * that rolls back leaves no alert.
+     */
+    private static function alertCreditToErasedAccount(float $amount, string $type, string $transactionId): void
+    {
+        AdminAlert::raise(
+            'credit_to_deleted_account',
+            'critical',
+            'Money credited to a deleted account',
+            '₱'.number_format($amount, 2)." ({$type}) went into an erased account's wallet, where nobody can use it, "
+                .'and the panel can’t move money out of an erased account. Pay it by hand to the account on their '
+                .'deletion payout (or back to whoever paid it), and ask engineering to record it against the wallet.',
+            $transactionId,
+        );
     }
 
     /**
@@ -1049,7 +1061,7 @@ class WalletService
             $newBonus = (float) $user->bonus_balance + $bonusRefund;
             $user->update(['wallet_balance' => $newBalance, 'bonus_balance' => $newBonus]);
 
-            return WalletTransaction::create([
+            $refund = WalletTransaction::create([
                 'user_id' => $userId,
                 'type' => 'refund',
                 'amount' => $amount,
@@ -1058,6 +1070,16 @@ class WalletService
                 'reference_id' => $referenceId,
                 'description' => 'Refund',
             ]);
+
+            // A GCash charge left open on a cancelled errand can be approved
+            // after the customer erased their account; its refund lands here.
+            // The "Refund issued" push can't reach a deleted account, so
+            // without this nobody would know the money is there.
+            if ($user->trashed()) {
+                self::alertCreditToErasedAccount($amount, 'refund', $refund->id);
+            }
+
+            return $refund;
         });
     }
 
@@ -1229,15 +1251,24 @@ class WalletService
      * Filament Payouts page. Throws PayoutStateException if the payout is
      * not pending (callers surface a clean 422 / notification).
      */
-    public function completePayout(string $txId): WalletTransaction
+    public function completePayout(string $txId, bool $byHand = false): WalletTransaction
     {
-        $tx = DB::transaction(function () use ($txId) {
+        $tx = DB::transaction(function () use ($txId, $byHand) {
             $tx = WalletTransaction::where('type', 'payout')
                 ->lockForUpdate()
                 ->findOrFail($txId);
 
             if ($tx->status !== 'pending') {
                 throw new \App\Exceptions\PayoutStateException('Only pending payouts can be marked completed.');
+            }
+
+            // Staff marking it paid by hand: re-checked under the lock, as the
+            // button's "not sent" check is not — a colleague's "Send via
+            // Xendit" landing a moment earlier would otherwise be paid twice.
+            if ($byHand && $tx->isSentToGateway()) {
+                throw new \App\Exceptions\PayoutStateException(
+                    'This payout was just sent through Xendit, so it settles from Xendit — it can’t also be marked paid by hand.'
+                );
             }
 
             $tx->update([
@@ -1440,11 +1471,7 @@ class WalletService
             ? "Your ₱{$amount} payout was returned, so the money is back in your wallet."
             : "Your ₱{$amount} payout couldn’t be sent, so the money is back in your wallet.";
 
-        if ($reason !== '') {
-            $body .= " Reason: {$reason}.";
-        }
-
-        $body .= ' Check your payout details, then request it again.';
+        $body .= ' '.self::payoutBounceAdvice($reason);
 
         \App\Jobs\SendPushJob::dispatch(
             $tx->user_id,
@@ -1470,6 +1497,50 @@ class WalletService
                 $tx->id,
             );
         }
+    }
+
+    /**
+     * Why a payout bounced and what to do, in words the person can act on.
+     *
+     * Staff type a reason when they fail a payout; Xendit sends a code
+     * (failure_code, or a status like "REVERSED"). Codes used to be shown raw
+     * — "Reason: INSUFFICIENT_BALANCE. Check your payout details" — though that
+     * code is ErrandGuy's own Xendit balance running short, not the person's
+     * account. A code now becomes plain words and the right next step; a
+     * staff-written reason is passed on as written. The raw code stays on the
+     * payout (failure_reason) for staff.
+     */
+    public static function payoutBounceAdvice(string $reason): string
+    {
+        $details = 'Check your payout details, then request it again.';
+        $later = 'This wasn’t a problem with your details — please request it again in a little while.';
+
+        if ($reason === '') {
+            return $details;
+        }
+
+        $isGatewayCode = preg_match('/^[A-Z][A-Z0-9_]*$/', $reason) === 1
+            || preg_match('/^Payout [a-z_ ]+ at gateway$/', $reason) === 1;
+        if (! $isGatewayCode) {
+            return "Reason: {$reason}. {$details}";
+        }
+
+        return match ($reason) {
+            'INVALID_DESTINATION', 'INVALID_ACCOUNT_DETAILS', 'ACCOUNT_NOT_FOUND', 'INVALID_ACCOUNT_NUMBER',
+            'RECIPIENT_ACCOUNT_CLOSED', 'ACCOUNT_CLOSED', 'RECIPIENT_NAME_MISMATCH', 'ACCOUNT_NAME_MISMATCH'
+                => 'The account number or name didn’t match an open account. '.$details,
+            'DESTINATION_MAXIMUM_LIMIT', 'RECIPIENT_ACCOUNT_LIMIT_EXCEEDED'
+                => 'The receiving account can’t accept this amount right now (it may have reached its limit). '
+                    .'Try a smaller amount or another account.',
+            'INSUFFICIENT_BALANCE', 'TEMPORARY_TRANSFER_ERROR', 'TRANSFER_ERROR', 'SERVER_ERROR',
+            'UNKNOWN_BANK_NETWORK_ERROR', 'SWITCHING_NETWORK_ERROR', 'TIMEOUT'
+                => $later,
+            'REJECTED_BY_CHANNEL', 'REJECTED_BY_BANK'
+                => 'Your bank or e-wallet declined it. '.$details
+                    .' If your details are right, try again later or use another account.',
+            default => 'The payment provider couldn’t complete it. '.$details
+                .' If it keeps happening, contact support.',
+        };
     }
 
     /**

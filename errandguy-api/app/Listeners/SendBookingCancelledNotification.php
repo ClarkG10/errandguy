@@ -17,8 +17,18 @@ class SendBookingCancelledNotification implements ShouldQueue
         $booking = $event->booking;
         $number = $booking->booking_number ?? $booking->id;
 
-        // Notify customer
-        if ($booking->customer_id) {
+        // Notify customer — on the inbox only (already read) when they were
+        // already told; see BookingCancelled::$quiet. (`?? false`: an event
+        // queued before that property existed unserializes without it.)
+        if ($booking->customer_id && ($event->quiet ?? false)) {
+            $this->notificationService->notifyInApp(
+                $booking->customer_id,
+                'Errand cancelled',
+                $event->customerMessage ?? "Your errand #{$number} has been cancelled.",
+                ['type' => 'booking_update', 'booking_id' => $booking->id, 'status' => 'cancelled'],
+                read: true,
+            );
+        } elseif ($booking->customer_id) {
             $this->notificationService->sendPush(
                 $booking->customer_id,
                 // Sentence case, and the object is an "errand" — matching

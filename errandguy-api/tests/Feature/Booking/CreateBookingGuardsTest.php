@@ -119,6 +119,20 @@ class CreateBookingGuardsTest extends TestCase
         $this->assertSame(0, Booking::count());
     }
 
+    public function test_leaving_the_vehicle_out_does_not_skip_the_check(): void
+    {
+        // No vehicle books a motorcycle; with motorcycles withdrawn for this
+        // type that used to price the errand on a ₱0/km rate.
+        $delivery = $this->type('delivery', ['per_km_motorcycle' => 0]);
+        $payload = $this->payload($delivery);
+        unset($payload['vehicle_type_rate']);
+
+        $this->actingAs($this->customer)->postJson('/api/v1/bookings', $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['vehicle_type_rate']);
+        $this->assertSame(0, Booking::count());
+    }
+
     public function test_a_vehicle_the_type_still_offers_books(): void
     {
         $delivery = $this->type('delivery', ['per_km_car' => 0]);

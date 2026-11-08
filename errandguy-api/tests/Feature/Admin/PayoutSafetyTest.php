@@ -341,6 +341,70 @@ class PayoutSafetyTest extends TestCase
             ->assertSee(Payouts::getUrl(), false);
     }
 
+    public function test_marking_paid_by_hand_is_refused_once_a_colleague_sent_it_through_xendit(): void
+    {
+        // The button was shown while the payout was unsent; a colleague's
+        // "Send via Xendit" landed before the confirm.
+        $tx = $this->pendingPayout();
+        $tx->update(['payout_sent_at' => now()]);
+
+        try {
+            app(WalletService::class)->completePayout($tx->id, byHand: true);
+            $this->fail('A payout sent through Xendit was also marked paid by hand.');
+        } catch (\App\Exceptions\PayoutStateException) {
+            // expected
+        }
+        $this->assertSame('pending', $tx->fresh()->status);
+
+        // Xendit's own confirmation still completes it.
+        app(WalletService::class)->completePayout($tx->id);
+        $this->assertSame('completed', $tx->fresh()->status);
+    }
+
+    public function test_a_stale_paid_notice_for_a_payout_since_reversed_is_not_called_paid_twice(): void
+    {
+        // Ours missed the "succeeded"; the bank then reversed it and the
+        // reversal failed the payout (money back in the wallet). Xendit's
+        // retry of the old "succeeded" is not a second payment.
+        $tx = $this->pendingPayout();
+        app(WalletService::class)->failPayout($tx->id, 'REVERSED');
+        $this->xendit[$tx->id] = ['status' => 'REVERSED'];
+
+        $this->postJson('/api/v1/webhooks/xendit', [
+            'event' => 'payout.succeeded',
+            'data' => ['id' => "disb-{$tx->id}", 'reference_id' => "payout-{$tx->id}"],
+        ], ['x-callback-token' => 'test-webhook-token'])->assertOk();
+
+        $this->assertSame(0, AdminAlert::where('type', 'payout_paid_after_failed')->count());
+        $this->assertEquals(500.0, (float) $this->runner->fresh()->wallet_balance);
+    }
+
+    public function test_a_reversal_that_loses_a_race_to_the_paid_notice_still_returns_the_money(): void
+    {
+        $tx = $this->sentPayout();
+
+        // payout.reversed read the payout as pending; payout.succeeded then
+        // completed it before failPayout took its lock.
+        $this->app->instance(WalletService::class, new class extends WalletService
+        {
+            public function failPayout(string $txId, string $reason, bool $confirmedByGateway = false): WalletTransaction
+            {
+                WalletTransaction::whereKey($txId)->update(['status' => 'completed']);
+
+                return parent::failPayout($txId, $reason, $confirmedByGateway);
+            }
+        });
+
+        $this->postJson('/api/v1/webhooks/xendit', [
+            'event' => 'payout.reversed',
+            'data' => ['id' => $tx->gateway_ref, 'reference_id' => "payout-{$tx->id}", 'status' => 'REVERSED'],
+        ], ['x-callback-token' => 'test-webhook-token'])->assertOk();
+
+        // Used to be swallowed: the money came back to us, the runner stayed debited.
+        $this->assertSame('reversed', $tx->fresh()->status);
+        $this->assertEquals(500.0, (float) $this->runner->fresh()->wallet_balance);
+    }
+
     public function test_send_via_xendit_prefills_the_recorded_destination_and_logs_it(): void
     {
         $tx = $this->pendingPayout([

@@ -127,7 +127,12 @@ class ViewUser extends ViewRecord
                 .'contacts and messages are erased and they are signed out everywhere; errand and payment records stay, '
                 .'without their identity. This can’t be undone.'
                 .((float) $this->getRecord()->wallet_balance > 0
-                    ? ' Their wallet has ₱'.number_format((float) $this->getRecord()->wallet_balance, 2)
+                    // The amount only for staff who see money (the admin role
+                    // doesn't see wallet balances anywhere else either).
+                    ? ' Their wallet has '
+                        .((auth('admin')->user()?->canManageMoney() ?? false)
+                            ? '₱'.number_format((float) $this->getRecord()->wallet_balance, 2)
+                            : 'money in it')
                         .': it is sent as a payout to the account below (leave it blank to use a runner’s saved payout details).'
                     : ''))
             ->modalSubmitActionLabel('Erase account')
@@ -136,7 +141,9 @@ class ViewUser extends ViewRecord
                     ->label('How they asked (for the audit log)')
                     ->required()
                     ->maxLength(500)
-                    ->helperText('For example: email from the address on the account, 4 Nov.'),
+                    // Kept in the audit log after everything else is erased —
+                    // so a reference, not their email address or number.
+                    ->helperText('For example: support ticket #1234, or “email from the address on the account, 4 Nov”. Don’t write their email or number here.'),
                 Select::make('channel')
                     ->label('Send the balance to')
                     ->options(fn (): array => $this->getRecord()->runnerProfile

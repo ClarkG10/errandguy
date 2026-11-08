@@ -534,12 +534,14 @@ class Payouts extends Page implements HasTable
                             ->label('How it was paid, and the reference')
                             ->required()
                             ->maxLength(500)
-                            ->helperText('For example: GCash to 0917 123 4567, reference 1234567890.'),
+                            // Kept in the audit log: the reference finance
+                            // reconciles against, not the person's full number.
+                            ->helperText('For example: GCash to the number ending 4567, reference 1234567890.'),
                     ])
                     ->visible(fn (WalletTransaction $record): bool => $record->status === 'pending' && ! $record->isSentToGateway())
                     ->action(function (array $data, WalletTransaction $record): void {
                         try {
-                            $tx = app(WalletService::class)->completePayout($record->id);
+                            $tx = app(WalletService::class)->completePayout($record->id, byHand: true);
                             AdminNotify::success(
                                 'Payout marked completed',
                                 $tx,

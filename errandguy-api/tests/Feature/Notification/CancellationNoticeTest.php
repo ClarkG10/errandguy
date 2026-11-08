@@ -141,6 +141,38 @@ class CancellationNoticeTest extends TestCase
         $this->assertEquals(115.0, (float) $this->customer->fresh()->wallet_balance);
     }
 
+    public function test_a_search_that_already_ended_in_no_runner_is_not_pushed_a_second_time(): void
+    {
+        \App\Models\DeviceToken::create(['user_id' => $this->customer->id, 'token' => 'ExponentPushToken[cust]']);
+        \Illuminate\Support\Facades\Http::fake(['exp.host/*' => \Illuminate\Support\Facades\Http::response(['data' => [['status' => 'ok']]], 200)]);
+        $booking = $this->booking('wallet', 'paid');
+
+        // The search ends: one push, "No runner available" with the refund.
+        MatchRunnerJob::dispatchSync($booking->id);
+        $this->assertSame('no_runner', $booking->fresh()->status);
+
+        // ~28 minutes later the matching deadline cancels it.
+        $booking->forceFill(['matching_started_at' => now()->subHours(3), 'created_at' => now()->subHours(3)])->save();
+        $this->assertTrue((new AutoCancelBookingJob($booking->id))->handle());
+        $this->assertSame('cancelled', $booking->fresh()->status);
+
+        $pushedTitles = collect(\Illuminate\Support\Facades\Http::recorded())
+            ->map(fn ($pair) => $pair[0]->data()['title'] ?? null)
+            ->filter()->values()->all();
+        $this->assertSame(['No runner available'], $pushedTitles);
+
+        // The push carries its inbox row, so tapping it can mark the row read.
+        $pushed = \Illuminate\Support\Facades\Http::recorded()[0][0]->data()['data'];
+        $this->assertSame(
+            (string) Notification::where('user_id', $this->customer->id)->where('title', 'No runner available')->value('id'),
+            $pushed['notification_id'],
+        );
+
+        // The cancel is still on record, but it doesn't buzz or add to the badge.
+        $row = Notification::where('user_id', $this->customer->id)->where('title', 'Errand cancelled')->firstOrFail();
+        $this->assertTrue((bool) $row->is_read);
+    }
+
     public function test_an_unmatched_errand_says_where_its_refund_went(): void
     {
         $booking = $this->booking('wallet', 'paid');

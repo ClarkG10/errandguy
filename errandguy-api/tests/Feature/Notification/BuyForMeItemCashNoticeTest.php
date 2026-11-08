@@ -51,7 +51,8 @@ class BuyForMeItemCashNoticeTest extends TestCase
             'schedule_type' => 'now', 'pricing_mode' => 'fixed', 'vehicle_type_rate' => 'motorcycle',
             'distance_km' => 5.0, 'base_fee' => 50, 'distance_fee' => 50, 'service_fee' => 15,
             'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
-            'payment_method' => 'cash', 'payment_status' => 'unpaid', 'is_transportation' => false,
+            // The fare paid up front (GCash): only the item money is due.
+            'payment_method' => 'gcash', 'payment_status' => 'paid', 'is_transportation' => false,
         ], $extra));
     }
 
@@ -105,6 +106,26 @@ class BuyForMeItemCashNoticeTest extends TestCase
         $this->assertSame(
             'Your runner paid for your items — please have the cash ready to repay them.',
             $this->notice($this->booking('grocery'), 'picked_up')[1],
+        );
+    }
+
+    public function test_on_a_cash_errand_the_fare_is_in_the_amount_to_have_ready(): void
+    {
+        // The runner collects the items AND the ₱115 fare at the door; asking
+        // for ₱450 left the customer ₱115 short.
+        $cash = ['payment_method' => 'cash', 'payment_status' => 'unpaid'];
+
+        $this->assertSame(
+            ['Items bought', 'Your runner paid ₱450.00 for your items — please have ₱565.00 cash ready (₱450.00 for the items + ₱115.00 fare).'],
+            $this->notice($this->booking('purchase', ['actual_item_cost' => 450] + $cash), 'picked_up'),
+        );
+        $this->assertSame(
+            'Your runner paid up to ₱1,200.00 for your items — please have up to ₱1,315.00 cash ready (up to ₱1,200.00 for the items + ₱115.00 fare).',
+            $this->notice($this->booking('purchase', ['shopping_budget' => 1200] + $cash), 'picked_up')[1],
+        );
+        $this->assertSame(
+            'Your runner paid for your items — please have the cash ready to repay them, plus the ₱115.00 fare.',
+            $this->notice($this->booking('purchase', $cash), 'picked_up')[1],
         );
     }
 

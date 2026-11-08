@@ -118,7 +118,10 @@ class IncomingRequest implements ShouldBroadcast
             // already carried; the realtime popup fell back to a 30-second
             // guess and no distance until its REST upgrade landed.
             'accept_deadline' => BookingService::matchAcceptDeadline($b->matched_at),
-            'distance_to_pickup_km' => $this->distanceToPickupKm,
+            // `??`: an offer queued before this property existed unserializes
+            // without it, and reading an unset typed property throws — the
+            // runner would lose the offer popup across a deploy.
+            'distance_to_pickup_km' => $this->distanceToPickupKm ?? null,
             'schedule_type' => $b->schedule_type,
             'scheduled_at' => optional($b->scheduled_at)->toIso8601String(),
             'matched_at' => optional($b->matched_at)->toIso8601String(),

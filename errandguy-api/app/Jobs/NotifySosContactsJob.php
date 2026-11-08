@@ -139,6 +139,13 @@ class NotifySosContactsJob extends BaseJob
 
         if ($delivered !== []) {
             $alert->update(['contacts_notified' => $delivered]);
+        } else {
+            // The provider refused or was unreachable — which it reports as a
+            // failed result, not an exception. Nothing went out, so the round
+            // doesn't count either: three failed rounds (an SMS outage, credit
+            // run out) used to use up the day, and the next real SOS skipped
+            // the contacts while telling the person they'd been texted.
+            \Illuminate\Support\Facades\Cache::decrement($roundsKey);
         }
 
         $missed = $contacts->count() - count($delivered);

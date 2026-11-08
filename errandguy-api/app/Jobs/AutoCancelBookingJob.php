@@ -37,7 +37,11 @@ class AutoCancelBookingJob implements ShouldQueue
         // silently clobbered back to 'cancelled' (and, for a prepaid booking,
         // wrongly refunded). Re-reading FOR UPDATE and re-checking inside the
         // transaction lets a concurrent accept win — mirrors ExpireStaleMatchesJob.
-        $didCancel = DB::transaction(function () {
+        // Whether the search had already ended in "no runner": MatchRunnerJob
+        // pushed the customer then (with the refund), so this cancel is quiet.
+        $wasNoRunner = false;
+
+        $didCancel = DB::transaction(function () use (&$wasNoRunner) {
             $booking = Booking::whereKey($this->bookingId)->lockForUpdate()->first();
 
             if (!$booking) {
@@ -70,6 +74,8 @@ class AutoCancelBookingJob implements ShouldQueue
                 return false;
             }
 
+            $wasNoRunner = $booking->status === 'no_runner';
+
             $booking->update([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
@@ -95,15 +101,18 @@ class AutoCancelBookingJob implements ShouldQueue
             Log::info("Booking {$this->bookingId} auto-cancelled: no runner found in time");
 
             // Broadcast the cancellation so the customer's booking.{id} channel
-            // drops them off the "finding a runner" screen live, and push them
-            // one notice that says why and where their money is: "…cancelled:
-            // no runner was available. ₱X was returned to your ErrandGuy
-            // wallet." (an unmatched errand refunded earlier by MatchRunnerJob
-            // reads the same — the money is in the wallet either way).
+            // drops them off the "finding a runner" screen live, and tell them
+            // once why and where their money is: "…cancelled: no runner was
+            // available. ₱X was returned to your ErrandGuy wallet." When the
+            // search had already ended in no_runner, MatchRunnerJob pushed
+            // that (refund included) — a second "Errand cancelled" push ~28
+            // minutes later, often after they had booked again, read like the
+            // new errand being cancelled. Then it is inbox-only.
             $cancelled = Booking::find($this->bookingId);
             event(new BookingCancelled(
                 $cancelled,
                 CancellationNotice::forCustomer($cancelled, CancellationNotice::NO_RUNNER),
+                quiet: $wasNoRunner,
             ));
         }
 

@@ -28,6 +28,12 @@ class BookingCancelled implements ShouldBroadcast
          * cause-neutral "Your errand has been cancelled."
          */
         public ?string $customerMessage = null,
+        /**
+         * The customer was already told (the "No runner available" push when
+         * the search ended): no second device push. The cancel still reaches
+         * the inbox and the live booking channel.
+         */
+        public bool $quiet = false,
     ) {}
 
     public function broadcastOn(): PrivateChannel
