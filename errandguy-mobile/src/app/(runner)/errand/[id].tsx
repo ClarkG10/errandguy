@@ -2551,8 +2551,10 @@ export default function ActiveErrandScreen() {
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
         >
           <Animated.View
-            className="bg-surface"
+            // Fill in `style`: NativeWind doesn't apply className to
+            // Reanimated's Animated.View (see BottomSheet).
             style={{
+              backgroundColor: LightColors.surface,
               height: sheetHeight,
               borderTopLeftRadius: Radius.sheet,
               borderTopRightRadius: Radius.sheet,

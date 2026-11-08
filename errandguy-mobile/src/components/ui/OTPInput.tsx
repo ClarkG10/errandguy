@@ -133,9 +133,11 @@ export function OTPInput({ length = 6, value, onChange, error, success }: OTPInp
 
   return (
     <View>
+      {/* Layout in `style`, not className: NativeWind doesn't apply
+          className to Reanimated's Animated.View, so the row fell back to
+          a column — six code cells stacked down the screen. */}
       <Animated.View
-        style={shakeStyle}
-        className="flex-row justify-center"
+        style={[{ flexDirection: 'row', justifyContent: 'center' }, shakeStyle]}
         accessibilityRole="text"
         accessibilityLabel={`One-time code, ${length} digits`}
       >

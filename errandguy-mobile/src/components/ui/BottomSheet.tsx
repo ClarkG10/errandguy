@@ -209,12 +209,16 @@ export function BottomSheet({
           accessibilityLabel="Close"
         />
         <Animated.View
-          className="absolute left-0 right-0 bg-surface"
           // Trap screen-reader focus inside the sheet and let the
           // standard escape gesture (iOS two-finger Z) dismiss it.
           accessibilityViewIsModal
           onAccessibilityEscape={onClose}
           style={[
+            // Position and fill in `style`, not className: NativeWind
+            // doesn't apply className to Reanimated's Animated.View, and
+            // without `absolute` the sheet was laid out below the dim and
+            // then translated further off-screen.
+            { position: 'absolute', top: 0, left: 0, right: 0, backgroundColor: LightColors.surface },
             { height: sheetHeight },
             // Edge-to-edge sheet (no floating side margins) — modern
             // apps anchor sheets to the screen edges. Subtler top
