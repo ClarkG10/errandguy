@@ -67,6 +67,26 @@ class MatchRunnerJob implements ShouldQueue
         public int $attempt = 1,
     ) {}
 
+    /**
+     * The search failed for good (every retry threw). The generic job-failure
+     * alert can't say WHICH errand; this one links to it. The payments sweep
+     * resumes a search that stopped (resumeSearchesThatNeverRan), so this is
+     * for staff to watch, not to act on unless it keeps happening.
+     */
+    public function failed(Throwable $e): void
+    {
+        $number = Booking::whereKey($this->bookingId)->value('booking_number');
+
+        \App\Models\AdminAlert::raise(
+            'matching_failed',
+            'error',
+            'The search for a runner failed'.($number ? " (#{$number})" : ''),
+            'Finding a runner for this errand failed: '.\Illuminate\Support\Str::limit($e->getMessage(), 300)
+                .' It is retried by the 15-minute sweep while its search window is open.',
+            $this->bookingId,
+        );
+    }
+
     public function handle(MatchingService $matchingService): void
     {
         // Cheap pre-check outside the transaction — avoid acquiring a row

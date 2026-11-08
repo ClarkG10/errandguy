@@ -281,7 +281,10 @@ class BookingSettlementService
                 'note' => 'Payment declined or expired',
             ]);
             if ($booking->runner_id) {
-                \Illuminate\Support\Facades\Cache::forget("runner_active_booking_id:{$booking->runner_id}");
+                // After the commit, so a GPS ping can't re-cache the errand
+                // before it is visibly cancelled.
+                $runnerId = $booking->runner_id;
+                DB::afterCommit(fn () => \Illuminate\Support\Facades\Cache::forget("runner_active_booking_id:{$runnerId}"));
             }
 
             return $booking;

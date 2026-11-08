@@ -203,7 +203,7 @@ class RunnerProfilesTable
                             // type the app maps to the runner-profile refresh.
                             \App\Jobs\SendPushJob::dispatch(
                                 $record->user_id,
-                                'Verification Approved!',
+                                'You’re approved to run errands',
                                 static::approvalPushBody($record),
                                 ['type' => 'document_update'],
                             );
@@ -270,7 +270,7 @@ class RunnerProfilesTable
                 // unlocks the go-online button the moment the push lands.
                 \App\Jobs\SendPushJob::dispatch(
                     $record->user_id,
-                    'Verification Approved!',
+                    'You’re approved to run errands',
                     static::approvalPushBody($record),
                     ['type' => 'document_update'],
                 );
@@ -325,10 +325,17 @@ class RunnerProfilesTable
                         'reviewed_at' => now(),
                     ]);
 
+                // Say what was decided, why, and what to do — "Verification
+                // Update" with only the reason ("blurry") left them guessing,
+                // and a runner whose approval was withdrawn wasn't told they
+                // had been taken offline.
+                $reason = rtrim(trim((string) $data['reason']), '.');
                 \App\Jobs\SendPushJob::dispatch(
                     $record->user_id,
-                    'Verification Update',
-                    $data['reason'],
+                    $wasApproved ? 'Your runner approval was withdrawn' : 'Your runner application wasn’t approved',
+                    $wasApproved
+                        ? "Reason: {$reason}. You’ve been switched offline and won’t get new errands. Contact support if you think this is a mistake."
+                        : "Reason: {$reason}. Fix it in the app (Profile → Documents) and send it again.",
                     ['type' => 'document_update'],
                 );
 

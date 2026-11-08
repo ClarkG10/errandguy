@@ -176,13 +176,20 @@ class PushCopyConsistencyTest extends TestCase
 
             for ($i = 0; $i < $count; $i++) {
                 $tok = $tokens[$i];
-                if (! is_array($tok) || $tok[0] !== T_STRING || ! in_array($tok[1], $methods, true)) {
+                if (! is_array($tok) || $tok[0] !== T_STRING) {
                     continue;
                 }
 
-                // Must be a method call: `->name(` or `?->name(`.
+                // A method call `->name(` / `?->name(`, or `SendPushJob::dispatch(`
+                // (staff actions push through the job, and their titles escaped
+                // this check: "Verification Approved!").
                 $prev = $tokens[$i - 1] ?? null;
-                if (! is_array($prev) || ! in_array($prev[0], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR], true)) {
+                $isMethod = in_array($tok[1], $methods, true) && is_array($prev)
+                    && in_array($prev[0], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR], true);
+                $class = $tokens[$i - 2] ?? null;
+                $isPushJob = $tok[1] === 'dispatch' && is_array($prev) && $prev[0] === T_DOUBLE_COLON
+                    && is_array($class) && str_ends_with($class[1], 'SendPushJob');
+                if (! $isMethod && ! $isPushJob) {
                     continue;
                 }
 

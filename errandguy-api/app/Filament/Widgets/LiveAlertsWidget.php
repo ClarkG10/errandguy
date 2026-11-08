@@ -142,7 +142,7 @@ class LiveAlertsWidget extends TableWidget
             // operator's whole job on these rows is to open it. The stall
             // monitor passes the booking id.
             'no_runner', 'stalled_errand', 'runner_owed_items', 'runner_suspended_mid_errand',
-            'charged_unrefunded_cancellation', 'completed_unpaid_booking' => $record->subject_id && BookingResource::canViewAny()
+            'charged_unrefunded_cancellation', 'completed_unpaid_booking', 'matching_failed' => $record->subject_id && BookingResource::canViewAny()
                 ? BookingResource::getUrl('view', ['record' => $record->subject_id])
                 : null,
             // A runner sent new documents: their application.

@@ -599,9 +599,11 @@ class RunnerErrandController extends Controller
             // RunnerLocationController to tag GPS pushes) needs to be
             // dropped on any terminal transition, otherwise the next
             // 30s of location pings would still be attributed to a
-            // booking that's already done.
+            // booking that's already done. After the commit: a ping between
+            // a forget here and the commit would re-cache the still-active
+            // (uncommitted) errand for another 30s.
             if (in_array($newStatus, ['completed', 'cancelled', 'no_runner'], true)) {
-                Cache::forget("runner_active_booking_id:{$user->id}");
+                DB::afterCommit(fn () => Cache::forget("runner_active_booking_id:{$user->id}"));
             }
 
             return null;

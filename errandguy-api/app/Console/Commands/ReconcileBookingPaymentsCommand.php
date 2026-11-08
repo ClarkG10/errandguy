@@ -210,6 +210,15 @@ class ReconcileBookingPaymentsCommand extends Command
      * left out: their search legitimately re-sweeps with no offers until the
      * window closes, and errandguy:start-due-scheduled-matching owns them.
      *
+     * Also a search that STOPPED after an offer: a lapsed or declined offer
+     * puts the errand back to pending and queues the next search, and if that
+     * queued job is lost (a Redis restart, three failures) nothing searched
+     * again until the auto-cancel ~30 minutes later — every errand that had
+     * been offered once, and every cash errand, was outside this sweep. Any
+     * pending errand (paid, or cash) that nothing has touched for a whole
+     * ladder plus two minutes has no search running: every offer, reset and
+     * "no runner" writes the row.
+     *
      * Resumed with beginMatching itself, which re-arms the auto-cancel and
      * runs a sweep; both are safe to repeat (the auto-cancel no-ops once the
      * errand leaves pending, and the sweep locks the row and only matches a
@@ -225,10 +234,10 @@ class ReconcileBookingPaymentsCommand extends Command
         $bookings = Booking::query()
             ->where('status', 'pending')
             ->whereNull('runner_id')
-            ->where('payment_status', 'paid')
-            ->where('offer_count', 0)
+            ->where(fn ($q) => $q->where('payment_status', 'paid')->orWhere('payment_method', 'cash'))
             ->whereNotNull('matching_started_at')
             ->where('matching_started_at', '<=', now()->subSeconds($stalledAfter))
+            ->where('updated_at', '<=', now()->subSeconds($stalledAfter))
             ->where(fn ($q) => $q->where('schedule_type', '!=', 'scheduled')
                 ->orWhereNull('schedule_type')
                 ->orWhereNull('scheduled_at'))
@@ -246,13 +255,13 @@ class ReconcileBookingPaymentsCommand extends Command
                 BookingService::beginMatching($booking);
                 $resumed++;
             } catch (\Throwable $e) {
-                Log::error('Could not resume the search for a paid errand', ['booking_id' => $booking->id, 'error' => $e->getMessage()]);
+                Log::error('Could not resume the search for an errand', ['booking_id' => $booking->id, 'error' => $e->getMessage()]);
             }
         }
 
         if ($resumed > 0) {
-            Log::warning("Resumed the search for {$resumed} paid errand(s) whose search never ran");
-            $this->warn("Resumed the search for {$resumed} paid errand(s) whose search never ran.");
+            Log::warning("Resumed the search for {$resumed} errand(s) with no search running");
+            $this->warn("Resumed the search for {$resumed} errand(s) with no search running.");
         }
     }
 

@@ -48,7 +48,7 @@ class ResumeStalledSearchTest extends TestCase
 
     private function claimedSearch(array $overrides = []): Booking
     {
-        return Booking::create(array_merge([
+        $booking = Booking::create(array_merge([
             'booking_number' => 'EG-RS-'.substr(uniqid(), -8),
             'customer_id' => $this->customer->id,
             'errand_type_id' => $this->type->id,
@@ -64,6 +64,13 @@ class ResumeStalledSearchTest extends TestCase
             'surcharge' => 0, 'total_amount' => 115, 'runner_payout' => 85,
             'is_transportation' => false,
         ], $overrides));
+
+        // The row was last written when its search was claimed (or as given).
+        $booking->timestamps = false;
+        $booking->forceFill(['updated_at' => $overrides['updated_at'] ?? $booking->matching_started_at ?? now()])->save();
+        $booking->timestamps = true;
+
+        return $booking;
     }
 
     public function test_a_paid_errand_whose_search_never_ran_is_resumed(): void
@@ -108,8 +115,9 @@ class ResumeStalledSearchTest extends TestCase
     {
         // Just claimed: its first sweep may still be running.
         $this->claimedSearch(['matching_started_at' => now()->subMinute()]);
-        // Already offered to a runner this round: its search ran.
-        $this->claimedSearch(['offer_count' => 1]);
+        // Offered a moment ago (an offer or reset writes the row): its
+        // search is running.
+        $this->claimedSearch(['offer_count' => 1, 'updated_at' => now()->subMinute()]);
         // Not paid: no search runs before the money is in.
         $this->claimedSearch(['payment_method' => 'gcash', 'payment_status' => 'pending']);
         // Out of time: the stranded-booking reaper cancels and refunds it.
@@ -127,5 +135,33 @@ class ResumeStalledSearchTest extends TestCase
         Bus::assertNotDispatched(MatchRunnerJob::class);
         Bus::assertNotDispatchedSync(MatchRunnerJob::class);
         Bus::assertNotDispatched(AutoCancelBookingJob::class);
+    }
+
+    public function test_a_search_that_stopped_after_an_offer_is_resumed_and_so_is_a_cash_one(): void
+    {
+        // The offer lapsed (or was declined), the errand went back to pending
+        // and its next search was queued — and lost. Nothing has written the
+        // row since, so nothing is searching. It was outside the sweep, as was
+        // every cash errand, until the auto-cancel ~30 minutes later.
+        $offered = $this->claimedSearch(['offer_count' => 2, 'updated_at' => now()->subMinutes(8)]);
+        $cash = $this->claimedSearch(['payment_method' => 'cash', 'payment_status' => 'unpaid', 'updated_at' => now()->subMinutes(8)]);
+
+        $this->artisan('errandguy:reconcile-booking-payments')->assertSuccessful();
+
+        Bus::assertDispatchedSyncTimes(MatchRunnerJob::class, 2);
+        foreach ([$offered, $cash] as $booking) {
+            Bus::assertDispatchedSync(MatchRunnerJob::class, fn (MatchRunnerJob $job) => $job->bookingId === $booking->id);
+        }
+    }
+
+    public function test_a_search_that_failed_for_good_raises_an_alert_naming_the_errand(): void
+    {
+        $booking = $this->claimedSearch();
+
+        (new MatchRunnerJob($booking->id))->failed(new \RuntimeException('Deadlock found when trying to get lock'));
+
+        $alert = \App\Models\AdminAlert::where('type', 'matching_failed')->sole();
+        $this->assertSame($booking->id, $alert->subject_id);
+        $this->assertStringContainsString($booking->booking_number, $alert->title);
     }
 }

@@ -50,11 +50,14 @@ class ExpireStaleMatchesJob implements ShouldQueue
             $didReset = false;
             $previousRunnerId = null;
 
-            DB::transaction(function () use ($staleBooking, &$didReset, &$previousRunnerId) {
+            DB::transaction(function () use ($staleBooking, $cutoff, &$didReset, &$previousRunnerId) {
                 // Re-read under a lock: the runner may have accepted (or the
-                // booking been cancelled) between the query and now.
+                // booking been cancelled) between the query and now — or the
+                // offer declined and the errand offered to someone NEW, whose
+                // fresh offer must not be taken back.
                 $booking = Booking::whereKey($staleBooking->id)->lockForUpdate()->first();
-                if (! $booking || $booking->status !== 'matched') {
+                if (! $booking || $booking->status !== 'matched'
+                    || $booking->matched_at === null || $booking->matched_at->gte($cutoff)) {
                     return;
                 }
 
