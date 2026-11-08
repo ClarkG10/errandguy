@@ -66,6 +66,26 @@ class BookingCreateHardeningTest extends TestCase
             ->assertStatus(201);
     }
 
+    public function test_a_claim_left_by_a_crashed_request_is_reclaimed_after_minutes_not_a_day(): void
+    {
+        Bus::fake();
+        foreach (['crashed-key' => 10, 'running-key' => 1] as $key => $minutesAgo) {
+            IdempotencyKey::create([
+                'user_id' => $this->customer->id, 'idem_key' => $key,
+                'method' => 'POST', 'path' => 'api/v1/bookings',
+                'status' => 'in_progress', 'request_hash' => 'x',
+                'locked_at' => now()->subMinutes($minutesAgo), 'expires_at' => now()->addDay(),
+            ]);
+        }
+
+        // Claimed 10 minutes ago and never finished: that request died.
+        $this->actingAs($this->customer)->withHeader('Idempotency-Key', 'crashed-key')
+            ->postJson('/api/v1/bookings', $this->validData)->assertStatus(201);
+        // Claimed a minute ago: it may still be running.
+        $this->actingAs($this->customer)->withHeader('Idempotency-Key', 'running-key')
+            ->postJson('/api/v1/bookings', $this->validData)->assertStatus(409);
+    }
+
     public function test_live_in_flight_idempotency_claim_still_returns_409(): void
     {
         IdempotencyKey::create([

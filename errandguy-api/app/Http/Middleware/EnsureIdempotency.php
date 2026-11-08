@@ -35,6 +35,9 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class EnsureIdempotency
 {
+    /** An in-flight claim older than this belongs to a request that died. */
+    private const STALE_CLAIM_MINUTES = 5;
+
     public function handle(Request $request, Closure $next, string $mode = 'soft'): Response
     {
         $key = $request->header('Idempotency-Key');
@@ -92,7 +95,14 @@ class EnsureIdempotency
             // dead claim instead of wedging a genuine retry at 409 for ~8 days
             // (until PruneDedupRecords finally deletes it). If it's NOT expired,
             // it's a real concurrent in-flight request → tell the caller to wait.
-            if ($existing->expires_at !== null && $existing->expires_at->isPast()) {
+            // A claim older than STALE_CLAIM_MINUTES is dead too: no request
+            // here runs that long (gateway calls time out in seconds, PHP-FPM
+            // in about a minute), and the day-long expiry alone kept a genuine
+            // retry refused for 24 hours after a hard crash.
+            $staleClaim = $existing->status === 'in_progress'
+                && $existing->locked_at !== null
+                && $existing->locked_at->lt(now()->subMinutes(self::STALE_CLAIM_MINUTES));
+            if ($staleClaim || ($existing->expires_at !== null && $existing->expires_at->isPast())) {
                 $existing->delete();
             } else {
                 return response()->json([
